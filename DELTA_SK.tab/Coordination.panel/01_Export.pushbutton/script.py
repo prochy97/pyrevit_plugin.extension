@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-__title__ = 'Vydanie\npre profesiu'
 __doc__ = ('Ulozi odtlacok VYBRANYCH WORKSETOV ako pomenovane vydanie.\n'
            'Spusti to vzdy pri odovzdani modelu profesii (statika, MEP, ...).\n'
            'Kazda profesia ma vlastne vydanie nad vlastnymi worksetmi.')
