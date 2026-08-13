@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-__title__ = 'Vycisti'
 __doc__ = 'Zrusi graficke prepisy a/alebo zmaze kontrolne 3D pohlady.'
 
 from pyrevit import revit, DB, forms, script
