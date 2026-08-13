@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-__title__ = 'Porovnaj\nzmeny'
 __doc__ = ('Porovna sucasny stav worksetov voci vybranemu vydaniu.\n'
            'Zafarbi zmenene prvky, vytvori kontrolny 3D pohlad na export '
            'a CSV zoznam zmien.\n\nSHIFT + klik = nastavenia.')
