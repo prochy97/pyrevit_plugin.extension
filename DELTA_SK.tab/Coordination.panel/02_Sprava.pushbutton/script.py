@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-__title__ = 'Sprava\nvydani'
 __doc__ = 'Prehlad vydani pre tento model, zoskupene podla profesie. Mazanie starych.'
 
 import os
