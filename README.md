@@ -75,12 +75,13 @@ Pipes, Pipe Fittings, Pipe Insulation, Ducts, Duct Fittings, Duct Insulation, Ca
 * Opening size = element size in the wall + clearance on each side, **rounded up to 10 mm**.
 * Openings that overlap after adding the clearance are **merged into one**.
 * Pipes and conduits **smaller than DN20** are ignored (drilled on site).
-* **Skewed crossings** (more than 5° off perpendicular) and elements running inside the wall are not placed. They are listed in the report for manual solution.
+* **Skewed crossings** get a larger opening that covers the whole elongated pass-through. Crossings more than 5° off perpendicular are marked in the report for checking.
+* Elements **running inside the wall** (more than 75° off perpendicular) are not placed. They are listed in the report for manual solution.
 * **Re-running** does not create duplicates: each opening stores the IDs of the clashing elements in `ID_otvor`.
 
 ### Opening family requirements
 * Generic Model, **wall based**.
-* Insertion point in the **center of the opening** (symmetric around *Center (Left/Right)* and *Ref. Level*).
+* Insertion point in the **center of the opening** (symmetric around *Center (Left/Right)* and *Ref. Level*). The height is set through *Elevation from Level*.
 * Void locked to **both wall faces**, so it cuts the full wall thickness.
 * Instance parameters: `Sirka_otvoru` (Length), `Vyska_otvoru` (Length), `ID_otvor` (Text).
 * Parameter names can be changed at the top of `script.py` (section NASTAVENIA), together with the rounding, DN limit and skew tolerance.
@@ -205,12 +206,13 @@ Potrubia, tvarovky potrubí, izolácia potrubí, VZT potrubia, VZT tvarovky, izo
 * Rozmer otvoru = rozmer prvku v stene + odstup na každú stranu, **zaokrúhlené nahor na 10 mm**.
 * Otvory, ktoré sa po pripočítaní odstupu prekrývajú, sa **zlúčia do jedného**.
 * Potrubia a chráničky **menšie ako DN20** sa ignorujú (riešia sa vŕtaním na stavbe).
-* **Šikmé prechody** (odklon od kolmice viac ako 5°) a prvky vedené v stene sa neosádzajú. Vypíšu sa v reporte na ručné riešenie.
+* **Šikmé prechody** dostanú väčší otvor, ktorý pokryje celý pretiahnutý prienik. Prechody s odklonom od kolmice nad 5° sú v reporte označené na kontrolu.
+* Prvky **vedené v stene** (odklon od kolmice nad 75°) sa neosádzajú. Vypíšu sa v reporte na ručné riešenie.
 * **Opakované spustenie** nevytvára duplicity: každý otvor si v parametri `ID_otvor` pamätá ID kolidujúcich prvkov.
 
 ### Požiadavky na rodinu otvoru
 * Generic Model, **wall based**.
-* Vkladací bod v **strede otvoru** (symetricky okolo *Center (Left/Right)* a *Ref. Level*).
+* Vkladací bod v **strede otvoru** (symetricky okolo *Center (Left/Right)* a *Ref. Level*). Výška sa nastavuje cez *Elevation from Level*.
 * Void zamknutý na **obe líca steny**, aby prerezal celú hrúbku.
 * Inštančné parametre: `Sirka_otvoru` (Length), `Vyska_otvoru` (Length), `ID_otvor` (Text).
 * Názvy parametrov sa dajú zmeniť na začiatku `script.py` (sekcia NASTAVENIA), spolu so zaokrúhlením, limitom DN a toleranciou šikmých prechodov.
