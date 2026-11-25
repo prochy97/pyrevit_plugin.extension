@@ -37,7 +37,8 @@ PARAM_LINKID = u"ID_otvor"      # inštančný parameter (text)
 
 ZAOKRUHLENIE_MM = 10.0          # rozmer otvoru sa zaokrúhli nahor
 MIN_DN_MM = 20.0                # potrubia/chráničky pod DN20 sa ignorujú
-TOLERANCIA_UHLA_DEG = 5.0       # väčší odklon od kolmice = šikmý prechod
+TOLERANCIA_UHLA_DEG = 5.0       # väčší odklon od kolmice = šikmý prechod (osadí sa, vypíše sa)
+MAX_UHOL_DEG = 75.0             # väčší odklon = prvok vedený v stene (neosadí sa)
 
 PREDVOLENY_FILTER = u"RCO"      # typy stien označené pri prvom spustení
 PREDVOLENA_RODINA = u"DGSK_otvor_stena"
@@ -209,7 +210,7 @@ def zluc_prekryvy(rects):
                         a[2] <= b[3] and b[2] <= a[3]):
                     rects[i] = [min(a[0], b[0]), max(a[1], b[1]),
                                 min(a[2], b[2]), max(a[3], b[3]),
-                                a[4] + b[4]]
+                                a[4] + b[4], max(a[5], b[5])]
                     del rects[j]
                     zmena = True
                     break
@@ -475,11 +476,11 @@ if not steny:
 # =====================================================================
 solid_cache = {}
 otvory_na_stene = {}     # wall_id -> [u0, u1, z0, z1, [kluce]]
-sikme = []               # [link, id prvku, kategória, stena, uhol]
+v_stene = []             # [link, id prvku, kategória, stena, uhol]
 chyby_geometrie = []     # [link, id prvku, stena]
 pocet_malych = 0
 pocet_duplicit = 0
-min_cos = math.cos(math.radians(TOLERANCIA_UHLA_DEG))
+min_cos_steny = math.cos(math.radians(MAX_UHOL_DEG))
 
 with forms.ProgressBar(title=u"Auto-shaft – hľadám kolízie ({value} / {max_value})",
                        cancellable=True) as pb:
@@ -519,16 +520,18 @@ with forms.ProgressBar(title=u"Auto-shaft – hľadám kolízie ({value} / {max_
                         pocet_malych += 1
                         continue
 
-                # šikmý prechod / prvok vedený v stene
+                # odklon od kolmice; šikmé prechody sa osádzajú,
+                # prvky vedené pozdĺž v stene sa len vypíšu
+                uhol = 0.0
                 smer = smer_prvku(e, ldoc)
                 if smer is not None:
                     hs = T.OfVector(smer).Normalize()
-                    cos_uhla = abs(hs.DotProduct(n))
-                    if cos_uhla < min_cos:
-                        uhol = math.degrees(math.acos(min(1.0, cos_uhla)))
-                        sikme.append([li.Name, e.Id.Value, e.Category.Name,
-                                      output.linkify(wall.Id),
-                                      u"{:.1f}°".format(uhol)])
+                    cos_uhla = min(1.0, abs(hs.DotProduct(n)))
+                    uhol = math.degrees(math.acos(cos_uhla))
+                    if cos_uhla < min_cos_steny:
+                        v_stene.append([li.Name, e.Id.Value, e.Category.Name,
+                                        output.linkify(wall.Id),
+                                        u"{:.1f}°".format(uhol)])
                         continue
 
                 # presný prienik geometrie
@@ -570,7 +573,7 @@ with forms.ProgressBar(title=u"Auto-shaft – hľadám kolízie ({value} / {max_
                 off = odstup_kat[bic]
                 otvory_na_stene.setdefault(wall.Id.Value, []).append(
                     [rozsah[0] - off, rozsah[1] + off,
-                     rozsah[2] - off, rozsah[3] + off, [kluc]])
+                     rozsah[2] - off, rozsah[3] + off, [kluc], uhol])
 
 # =====================================================================
 #  7) OSADENIE OTVOROV
@@ -584,7 +587,7 @@ if otvory_na_stene:
             symbol.Activate()
             doc.Regenerate()
 
-        na_posun = []   # (instancia, cielovy bod, normala steny)
+        na_posun = []   # (instancia, cielovy bod, smer steny, level)
         kontrola_parametrov = True
 
         for wall_id_val, rects in otvory_na_stene.items():
@@ -626,20 +629,30 @@ if otvory_na_stene:
                 ps.Set(sirka)
                 pv.Set(vyska)
                 pl.Set(u";".join(r[4]))
-                na_posun.append((inst, ciel, wall.Orientation))
+                na_posun.append((inst, ciel, d, level))
                 osadene.append([output.linkify(inst.Id), output.linkify(wall.Id),
                                 int(round(ft2mm(sirka))), int(round(ft2mm(vyska))),
-                                len(r[4])])
+                                len(r[4]),
+                                u"{:.1f}°".format(r[5]) if r[5] > TOLERANCIA_UHLA_DEG
+                                else u"–"])
 
-        # vloženie bodu do stredu otvoru (Revit pri hostovaní posúva bod)
+        # výška: priamo cez "Elevation from Level" (stred otvoru = počiatok rodiny)
+        for inst, ciel, smer, level in na_posun:
+            pe = inst.get_Parameter(BIP.INSTANCE_ELEVATION_PARAM)
+            if pe is None or pe.IsReadOnly:
+                raise Exception(u"Rodina nemá zapisovateľný parameter "
+                                u"Elevation from Level.")
+            pe.Set(ciel.Z - level.ProjectElevation)
+
+        # poloha pozdĺž steny: posun iba v smere steny (bez zmeny výšky)
         doc.Regenerate()
         tol = mm2ft(0.5)
-        for inst, ciel, nrm in na_posun:
+        for inst, ciel, smer, level in na_posun:
             skut = inst.Location.Point
-            delta = ciel - skut
-            delta = delta - nrm.Multiply(delta.DotProduct(nrm))
-            if delta.GetLength() > tol:
-                DB.ElementTransformUtils.MoveElement(doc, inst.Id, delta)
+            posun = (ciel - skut).DotProduct(smer)
+            if abs(posun) > tol:
+                DB.ElementTransformUtils.MoveElement(doc, inst.Id,
+                                                     smer.Multiply(posun))
 
         t.Commit()
     except SystemExit:
@@ -662,17 +675,20 @@ output.print_md(u"- Osadené otvory: **{}**".format(len(osadene)))
 output.print_md(u"- Preskočené – otvor už existuje: **{}**".format(pocet_duplicit))
 output.print_md(u"- Preskočené – menšie ako DN{}: **{}**".format(
     int(MIN_DN_MM), pocet_malych))
-output.print_md(u"- Šikmé prechody / prvky vedené v stene: **{}**".format(len(sikme)))
+output.print_md(u"- Z toho šikmé prechody (skontrolovať): **{}**".format(
+    sum(1 for o in osadene if o[5] != u"–")))
+output.print_md(u"- Preskočené – prvky vedené v stene: **{}**".format(len(v_stene)))
 output.print_md(u"- Zlyhaný výpočet geometrie: **{}**".format(len(chyby_geometrie)))
 
 if osadene:
     output.print_md(u"### Osadené otvory")
     output.print_table(osadene, columns=[u"Otvor", u"Stena", u"Šírka [mm]",
-                                         u"Výška [mm]", u"Počet prvkov"])
-if sikme:
-    output.print_md(u"### Šikmé prechody – riešiť ručne")
-    output.print_table(sikme, columns=[u"Link", u"ID prvku", u"Kategória",
-                                       u"Stena", u"Odklon od kolmice"])
+                                         u"Výška [mm]", u"Počet prvkov",
+                                         u"Šikmý prechod"])
+if v_stene:
+    output.print_md(u"### Prvky vedené v stene – riešiť ručne")
+    output.print_table(v_stene, columns=[u"Link", u"ID prvku", u"Kategória",
+                                         u"Stena", u"Odklon od kolmice"])
 if chyby_geometrie:
     output.print_md(u"### Zlyhaný výpočet geometrie – skontrolovať ručne")
     output.print_table(chyby_geometrie, columns=[u"Link", u"ID prvku", u"Stena"])
