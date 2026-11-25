@@ -11,10 +11,15 @@ __doc__ = (u"Nájde kolízie vybraných typov stien s prvkami v nalinkovaných "
 import math
 import os
 
+import clr
+clr.AddReference("PresentationCore")
+clr.AddReference("PresentationFramework")
+clr.AddReference("WindowsBase")
+
 from System.Collections.Generic import List
+from pyrevit import revit, DB, forms, script
 from System.Windows import Thickness
 from System.Windows.Controls import CheckBox
-from pyrevit import revit, DB, forms, script
 
 doc = revit.doc
 view = doc.ActiveView
