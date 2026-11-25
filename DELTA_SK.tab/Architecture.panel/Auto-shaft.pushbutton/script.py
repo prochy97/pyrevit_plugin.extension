@@ -1,16 +1,19 @@
 # -*- coding: utf-8 -*-
 """Auto-shaft
-Osadí obdĺžnikové otvory do nosných stien v mieste kolízií
+Osadí obdĺžnikové otvory do vybraných typov stien v mieste kolízií
 s nalinkovanými profesiami. Pracuje iba v aktívnom view.
 """
 __title__ = "Auto-shaft"
-__doc__ = (u"Nájde kolízie nosných stien s prvkami v nalinkovaných "
+__doc__ = (u"Nájde kolízie vybraných typov stien s prvkami v nalinkovaných "
            u"modeloch profesií (iba aktívny view) a osadí do nich "
            u"obdĺžnikové otvory so zadaným odstupom.")
 
 import math
+import os
 
 from System.Collections.Generic import List
+from System.Windows import Thickness
+from System.Windows.Controls import CheckBox
 from pyrevit import revit, DB, forms, script
 
 doc = revit.doc
@@ -31,12 +34,17 @@ ZAOKRUHLENIE_MM = 10.0          # rozmer otvoru sa zaokrúhli nahor
 MIN_DN_MM = 20.0                # potrubia/chráničky pod DN20 sa ignorujú
 TOLERANCIA_UHLA_DEG = 5.0       # väčší odklon od kolmice = šikmý prechod
 
+PREDVOLENY_FILTER = u"RCO"      # typy stien označené pri prvom spustení
+PREDVOLENA_RODINA = u"DGSK_otvor_stena"
+PREDVOLENY_ODSTUP = u"50"
+
+# kľúč (= názov ovládacích prvkov v ui.xaml), popis, kategórie
 PROFESIE = [
-    (u"Potrubia (ZTI, ÚK, chladenie)",
+    ("pipes", u"Potrubia (ZTI, ÚK, chladenie)",
      [BIC.OST_PipeCurves, BIC.OST_PipeFitting, BIC.OST_PipeInsulations]),
-    (u"VZT",
+    ("vzt", u"VZT",
      [BIC.OST_DuctCurves, BIC.OST_DuctFitting, BIC.OST_DuctInsulations]),
-    (u"Elektro (žľaby, chráničky)",
+    ("ele", u"Elektro (žľaby, chráničky)",
      [BIC.OST_CableTray, BIC.OST_CableTrayFitting,
       BIC.OST_Conduit, BIC.OST_ConduitFitting]),
 ]
@@ -76,19 +84,13 @@ def bic_of(elem):
         return None
 
 
-def ask_mm(prompt, default):
-    while True:
-        val = forms.ask_for_string(default=str(default), prompt=prompt,
-                                   title=u"Auto-shaft")
-        if val is None:
-            script.exit()
-        try:
-            num = float(val.replace(",", "."))
-            if num >= 0:
-                return num
-        except ValueError:
-            pass
-        forms.alert(u"Zadaj kladné číslo v mm (napr. 50).")
+def parse_mm(text):
+    """Vráti nezáporné číslo v mm, alebo None pri neplatnom vstupe."""
+    try:
+        num = float((text or u"").strip().replace(",", "."))
+    except ValueError:
+        return None
+    return num if num >= 0 else None
 
 
 GEO_OPT = DB.Options()
@@ -218,65 +220,217 @@ def nazov_symbolu(sym):
 
 
 # =====================================================================
-#  1) KONTROLA VIEW
+#  1) KONTROLA VIEW A ZBER ÚDAJOV
 # =====================================================================
 if not isinstance(view, (DB.ViewPlan, DB.ViewSection, DB.View3D)):
     forms.alert(u"Aktívny view musí byť pôdorys, rez, pohľad alebo 3D.",
                 exitscript=True)
 
-# =====================================================================
-#  2) VSTUPY OD POUŽÍVATEĽA
-# =====================================================================
 symboly = {}
 for s in DB.FilteredElementCollector(doc).OfClass(DB.FamilySymbol) \
         .OfCategory(BIC.OST_GenericModel):
     if s.Family.FamilyPlacementType == DB.FamilyPlacementType.OneLevelBasedHosted:
         symboly[nazov_symbolu(s)] = s
-
 if not symboly:
     forms.alert(u"V projekte nie je načítaná žiadna hostovaná (wall-based) "
                 u"rodina kategórie Generic Model.", exitscript=True)
 
-volba = forms.SelectFromList.show(sorted(symboly.keys()),
-                                  title=u"Auto-shaft – rodina otvoru",
-                                  button_name=u"Vybrať",
-                                  multiselect=False)
-if not volba:
+# typy stien v aktívnom view: type_id -> {"name", "walls"}
+typy_stien = {}
+for w in DB.FilteredElementCollector(doc, view.Id).OfClass(DB.Wall):
+    if w.WallType.Kind != DB.WallKind.Basic:
+        continue
+    tid = w.GetTypeId().Value
+    if tid not in typy_stien:
+        typy_stien[tid] = {"name": DB.Element.Name.GetValue(w.WallType),
+                           "walls": []}
+    typy_stien[tid]["walls"].append(w)
+if not typy_stien:
+    forms.alert(u"V aktívnom view nie sú žiadne steny.", exitscript=True)
+
+linky_vo_view = []
+for li in DB.FilteredElementCollector(doc, view.Id).OfClass(DB.RevitLinkInstance):
+    if li.IsHidden(view) or li.GetLinkDocument() is None:
+        continue
+    linky_vo_view.append(li)
+if not linky_vo_view:
+    forms.alert(u"V aktívnom view nie je zapnutý žiadny načítaný link.",
+                exitscript=True)
+
+cfg = script.get_config()
+
+
+def cfg_get(name, default):
+    try:
+        val = cfg.get_option(name, default)
+        return default if val is None else val
+    except Exception:
+        return default
+
+
+# =====================================================================
+#  2) OKNO S NASTAVENIAMI
+# =====================================================================
+class AutoShaftOkno(forms.WPFWindow):
+    def __init__(self, xaml_file):
+        forms.WPFWindow.__init__(self, xaml_file)
+        self.result = None
+
+        # 1. rodina
+        self.nazvy_rodin = sorted(symboly.keys())
+        for n in self.nazvy_rodin:
+            self.family_cb.Items.Add(n)
+        ulozena = cfg_get("rodina", u"")
+        idx = 0
+        if ulozena in self.nazvy_rodin:
+            idx = self.nazvy_rodin.index(ulozena)
+        else:
+            for i, n in enumerate(self.nazvy_rodin):
+                if PREDVOLENA_RODINA.lower() in n.lower():
+                    idx = i
+                    break
+        self.family_cb.SelectedIndex = idx
+
+        # 2. typy stien
+        self.filter_tb.Text = cfg_get("filter", PREDVOLENY_FILTER)
+        self.wall_cbs = []
+        for tid, info in sorted(typy_stien.items(),
+                                key=lambda kv: kv[1]["name"].lower()):
+            cb = CheckBox()
+            cb.Content = u"{}   ({} ks)".format(info["name"], len(info["walls"]))
+            cb.Tag = tid
+            cb.Margin = Thickness(2)
+            self.walls_sp.Children.Add(cb)
+            self.wall_cbs.append((cb, info["name"]))
+        self.oznac_podla_filtra()
+
+        # 3. linky
+        self.link_cbs = []
+        for li in linky_vo_view:
+            cb = CheckBox()
+            cb.Content = li.Name
+            cb.Tag = li.Id.Value
+            cb.IsChecked = True
+            cb.Margin = Thickness(2)
+            self.links_sp.Children.Add(cb)
+            self.link_cbs.append(cb)
+
+        # 4. profesie a odstup
+        self.uniform_tb.Text = cfg_get("odstup", PREDVOLENY_ODSTUP)
+        for key, _, _ in PROFESIE:
+            getattr(self, key + "_cb").IsChecked = \
+                cfg_get("prof_" + key, u"1") == u"1"
+            getattr(self, key + "_tb").Text = \
+                cfg_get("odstup_" + key, PREDVOLENY_ODSTUP)
+        if cfg_get("rezim", u"jednotny") == u"jednotny":
+            self.uniform_rb.IsChecked = True
+        else:
+            self.per_rb.IsChecked = True
+        self.prepni_rezim()
+
+        # udalosti
+        self.uniform_rb.Checked += lambda s, e: self.prepni_rezim()
+        self.per_rb.Checked += lambda s, e: self.prepni_rezim()
+        self.filter_b.Click += lambda s, e: self.oznac_podla_filtra()
+        self.all_b.Click += lambda s, e: self.oznac_vsetky(True)
+        self.none_b.Click += lambda s, e: self.oznac_vsetky(False)
+        self.start_b.Click += self.start
+        self.cancel_b.Click += lambda s, e: self.Close()
+
+    def oznac_podla_filtra(self):
+        vyrazy = [v.strip().lower()
+                  for v in (self.filter_tb.Text or u"").replace(",", ";").split(";")
+                  if v.strip()]
+        for cb, nazov in self.wall_cbs:
+            cb.IsChecked = any(v in nazov.lower() for v in vyrazy)
+
+    def oznac_vsetky(self, stav):
+        for cb, _ in self.wall_cbs:
+            cb.IsChecked = stav
+
+    def prepni_rezim(self):
+        jednotny = bool(self.uniform_rb.IsChecked)
+        self.uniform_tb.IsEnabled = jednotny
+        for key, _, _ in PROFESIE:
+            getattr(self, key + "_tb").IsEnabled = not jednotny
+
+    def start(self, sender, args):
+        if self.family_cb.SelectedIndex < 0:
+            forms.alert(u"Vyber rodinu otvoru.")
+            return
+        steny_ids = set(cb.Tag for cb, _ in self.wall_cbs if cb.IsChecked)
+        if not steny_ids:
+            forms.alert(u"Označ aspoň jeden typ steny.")
+            return
+        link_ids = set(cb.Tag for cb in self.link_cbs if cb.IsChecked)
+        if not link_ids:
+            forms.alert(u"Označ aspoň jeden link.")
+            return
+        profesie = [key for key, _, _ in PROFESIE
+                    if getattr(self, key + "_cb").IsChecked]
+        if not profesie:
+            forms.alert(u"Označ aspoň jednu profesiu.")
+            return
+
+        jednotny = bool(self.uniform_rb.IsChecked)
+        odstupy = {}
+        if jednotny:
+            v = parse_mm(self.uniform_tb.Text)
+            if v is None:
+                forms.alert(u"Jednotný odstup musí byť kladné číslo v mm.")
+                return
+            for key in profesie:
+                odstupy[key] = v
+        else:
+            popisy = dict((k, p) for k, p, _ in PROFESIE)
+            for key in profesie:
+                v = parse_mm(getattr(self, key + "_tb").Text)
+                if v is None:
+                    forms.alert(u"Odstup pre '{}' musí byť kladné číslo v mm."
+                                .format(popisy[key]))
+                    return
+                odstupy[key] = v
+
+        # uloženie nastavení na ďalšie spustenie
+        try:
+            cfg.set_option("rodina", self.family_cb.SelectedItem)
+            cfg.set_option("filter", self.filter_tb.Text or u"")
+            cfg.set_option("rezim", u"jednotny" if jednotny else u"profesie")
+            cfg.set_option("odstup", self.uniform_tb.Text or u"")
+            for key, _, _ in PROFESIE:
+                cfg.set_option("prof_" + key,
+                               u"1" if getattr(self, key + "_cb").IsChecked else u"0")
+                cfg.set_option("odstup_" + key,
+                               getattr(self, key + "_tb").Text or u"")
+            script.save_config()
+        except Exception:
+            pass
+
+        self.result = {
+            "rodina": self.family_cb.SelectedItem,
+            "steny": steny_ids,
+            "linky": link_ids,
+            "odstupy": odstupy,
+        }
+        self.Close()
+
+
+okno = AutoShaftOkno(os.path.join(os.path.dirname(__file__), "ui.xaml"))
+okno.ShowDialog()
+vysledok = okno.result
+if not vysledok:
     script.exit()
+
+volba = vysledok["rodina"]
 symbol = symboly[volba]
-
-nazvy_profesii = [p[0] for p in PROFESIE]
-vybrane = forms.SelectFromList.show(
-    [forms.TemplateListItem(n, checked=True) for n in nazvy_profesii],
-    title=u"Auto-shaft – profesie",
-    button_name=u"Pokračovať",
-    multiselect=True)
-if not vybrane:
-    script.exit()
-
-rezim = forms.CommandSwitchWindow.show(
-    [u"Jednotný odstup", u"Odstup podľa profesie"],
-    message=u"Odstup otvoru od prvku (na každú stranu):")
-if not rezim:
-    script.exit()
-
-odstup_profesie = {}
-if rezim == u"Jednotný odstup":
-    hodnota = ask_mm(u"Odstup pre všetky profesie [mm]:", 50)
-    for n in vybrane:
-        odstup_profesie[n] = mm2ft(hodnota)
-else:
-    for n in vybrane:
-        odstup_profesie[n] = mm2ft(ask_mm(u"Odstup – {} [mm]:".format(n), 50))
 
 odstup_kat = {}
 vsetky_kat = []
-for nazov, kats in PROFESIE:
-    if nazov in vybrane:
+for key, _, kats in PROFESIE:
+    if key in vysledok["odstupy"]:
         for k in kats:
-            odstup_kat[int(k)] = odstup_profesie[nazov]
+            odstup_kat[int(k)] = mm2ft(vysledok["odstupy"][key])
             vsetky_kat.append(k)
-
 cat_filter = DB.ElementMulticategoryFilter(List[DB.BuiltInCategory](vsetky_kat))
 
 # =====================================================================
@@ -292,39 +446,23 @@ for inst in DB.FilteredElementCollector(doc).OfClass(DB.FamilyInstance) \
         existujuce.update(p.AsString().split(u";"))
 
 # =====================================================================
-#  4) NOSNÉ STENY V AKTÍVNOM VIEW
+#  4) VYBRANÉ STENY A LINKY
 # =====================================================================
 steny = []
 steny_preskocene = []
-for w in DB.FilteredElementCollector(doc, view.Id).OfClass(DB.Wall):
-    if w.WallType.Kind != DB.WallKind.Basic:
-        continue
-    p = w.get_Parameter(BIP.WALL_STRUCTURAL_SIGNIFICANT)
-    if p is None or p.AsInteger() != 1:
-        continue
-    loc = w.Location
-    if not (isinstance(loc, DB.LocationCurve) and isinstance(loc.Curve, DB.Line)):
-        steny_preskocene.append(w)
-        continue
-    steny.append(w)
+for tid in vysledok["steny"]:
+    for w in typy_stien[tid]["walls"]:
+        loc = w.Location
+        if isinstance(loc, DB.LocationCurve) and isinstance(loc.Curve, DB.Line):
+            steny.append(w)
+        else:
+            steny_preskocene.append(w)
+
+linky = [li for li in linky_vo_view if li.Id.Value in vysledok["linky"]]
+nazvy_typov = sorted(typy_stien[t]["name"] for t in vysledok["steny"])
 
 if not steny:
-    forms.alert(u"V aktívnom view nie sú žiadne nosné (Structural) rovné steny.",
-                exitscript=True)
-
-# =====================================================================
-#  5) LINKY VIDITEĽNÉ V AKTÍVNOM VIEW
-# =====================================================================
-linky = []
-for li in DB.FilteredElementCollector(doc, view.Id).OfClass(DB.RevitLinkInstance):
-    if li.IsHidden(view):
-        continue
-    if li.GetLinkDocument() is None:
-        continue
-    linky.append(li)
-
-if not linky:
-    forms.alert(u"V aktívnom view nie je zapnutý žiadny načítaný link.",
+    forms.alert(u"Vybrané typy stien nemajú v aktívnom view žiadne rovné steny.",
                 exitscript=True)
 
 # =====================================================================
@@ -512,8 +650,9 @@ if otvory_na_stene:
 # =====================================================================
 output.print_md(u"## Auto-shaft – výsledok")
 output.print_md(
-    u"View: **{}** | Rodina: **{}** | Nosné steny: **{}** | Linky: **{}**".format(
+    u"View: **{}** | Rodina: **{}** | Steny: **{}** | Linky: **{}**".format(
         view.Name, volba, len(steny), u", ".join(l.Name for l in linky)))
+output.print_md(u"Typy stien: {}".format(u", ".join(nazvy_typov)))
 output.print_md(u"- Osadené otvory: **{}**".format(len(osadene)))
 output.print_md(u"- Preskočené – otvor už existuje: **{}**".format(pocet_duplicit))
 output.print_md(u"- Preskočené – menšie ako DN{}: **{}**".format(
@@ -533,5 +672,5 @@ if chyby_geometrie:
     output.print_md(u"### Zlyhaný výpočet geometrie – skontrolovať ručne")
     output.print_table(chyby_geometrie, columns=[u"Link", u"ID prvku", u"Stena"])
 if steny_preskocene:
-    output.print_md(u"### Oblúkové nosné steny – preskočené")
+    output.print_md(u"### Oblúkové steny – preskočené")
     output.print_md(u", ".join(output.linkify(w.Id) for w in steny_preskocene))
