@@ -9,7 +9,7 @@ Custom **pyRevit** extension with automation tools for Autodesk Revit. Tools app
 | Panel | Tool | Purpose |
 |---|---|---|
 | Architecture | **AutoJoin** | Automatic Join Geometry in the active view with structural priority |
-| Architecture | **Auto-shaft** | Automatic rectangular openings in selected wall types at clashes with linked MEP models |
+| Architecture | **Auto-shaft** | Automatic rectangular openings in selected wall types at clashes with linked MEP models, plus check and update of existing openings |
 | YIT | **TALO kódy** | Naming of element types and parameters per YIT EIR (TALO 2000 codes) |
 
 ---
@@ -49,7 +49,7 @@ Walls, Floors, Ceilings, Stairs, Columns, Structural Columns, Structural Foundat
 ## Auto-shaft
 
 Finds clashes between **selected wall types** in the host model and elements in **linked MEP models**, and places rectangular openings around them with a defined clearance. Works in the **active view only**. The easiest way to limit the area is a 3D view with a section box.
-Status: **v1, in testing**.
+Status: **v2, in testing**.
 
 ### How to use
 1. Open a 3D view (or plan / section), set the section box and switch on the MEP links.
@@ -58,8 +58,10 @@ Status: **v1, in testing**.
    * **Wall types** in the active view. Types matching the name filter (default `RCO`) are pre-selected; the selection can be edited manually. More terms are separated by `;`.
    * **MEP links** visible in the view (all pre-selected).
    * **Disciplines and clearance**: uniform for all, or per discipline (mm on each side).
-3. Click **Start**.
-4. Check the report in the pyRevit output window. Clicking an ID zooms to the element.
+   * **What to do**: place new openings, check existing openings, update moved/changed ones, delete openings without a clash.
+3. Click **Start**. Everything is computed first, nothing is written yet.
+4. A summary appears (new / to update / to delete). Choose **Execute**, **Report only** (model is not changed) or **Cancel**.
+5. Check the report in the pyRevit output window. Clicking an ID zooms to the element.
 
 The window remembers the last settings for the next run.
 
@@ -77,7 +79,15 @@ Pipes, Pipe Fittings, Pipe Insulation, Ducts, Duct Fittings, Duct Insulation, Ca
 * Pipes and conduits **smaller than DN20** are ignored (drilled on site).
 * **Skewed crossings** get a larger opening that covers the whole elongated pass-through. Crossings more than 5° off perpendicular are marked in the report for checking.
 * Elements **running inside the wall** (more than 75° off perpendicular) are not placed. They are listed in the report for manual solution.
-* **Re-running** does not create duplicates: each opening stores the IDs of the clashing elements in `ID_otvor`.
+* **Re-running** does not create duplicates: elements that already have an opening are skipped (and handled by the check instead).
+
+### Checking existing openings
+* Checked are openings of the selected family whose host wall is visible in the active view.
+* Each opening stores the UniqueIds of its linked elements in `ID_otvor`. The tool finds them in the currently loaded links and recomputes the required size and position.
+* Result per opening: **OK**, **moved / resized** (difference over 5 mm), **no clash** (element no longer passes through the wall) or **element deleted** in the link.
+* If some link is not loaded, openings whose elements cannot be found are marked **not verified** and are never deleted.
+* If the MEP designer deletes and redraws an element, it gets a new UniqueId: the old opening is reported as *element deleted* and a new opening is proposed.
+* Wall geometry is computed without our openings (they are temporarily removed in a rolled-back transaction), so an element passing through an existing opening is still detected.
 
 ### Opening family requirements
 * Generic Model, **wall based**.
@@ -88,7 +98,7 @@ Pipes, Pipe Fittings, Pipe Insulation, Ducts, Duct Fittings, Duct Insulation, Ca
 
 ### Limitations
 * Rectangular openings only.
-* Openings are **not updated** when the MEP links change. Moved elements get a new opening, the old one must be deleted manually.
+* Openings that were merged from several elements are checked as one: if the elements move apart, the opening is enlarged to cover all of them, not split.
 * Openings cannot be placed into walls in linked models.
 * Requires **Revit 2024 or newer**.
 
@@ -140,7 +150,7 @@ Vlastné rozšírenie pre **pyRevit** s automatizačnými nástrojmi pre Autodes
 | Panel | Nástroj | Účel |
 |---|---|---|
 | Architecture | **AutoJoin** | Automatické Join Geometry v aktívnom pohľade s prioritou konštrukcií |
-| Architecture | **Auto-shaft** | Automatické obdĺžnikové otvory vo vybraných typoch stien v miestach kolízií s linkami profesií |
+| Architecture | **Auto-shaft** | Automatické obdĺžnikové otvory vo vybraných typoch stien v miestach kolízií s linkami profesií, kontrola a aktualizácia existujúcich otvorov |
 | YIT | **TALO kódy** | Pomenovanie typov a vyplnenie parametrov podľa EIR YIT (kódy TALO 2000) |
 
 ---
@@ -180,7 +190,7 @@ Steny, Stropy/Podlahy, Podhľady, Schodiská, Stĺpy, Nosné stĺpy, Základy, N
 ## Auto-shaft
 
 Nájde kolízie **vybraných typov stien** v našom modeli s prvkami v **nalinkovaných modeloch profesií** a osadí okolo nich obdĺžnikové otvory so zadaným odstupom. Pracuje **len v aktívnom pohľade**. Rozsah sa najjednoduchšie obmedzí 3D pohľadom so section boxom.
-Stav: **v1, testovanie**.
+Stav: **v2, testovanie**.
 
 ### Postup
 1. Otvor 3D pohľad (alebo pôdorys / rez), nastav section box a zapni linky profesií.
@@ -189,8 +199,10 @@ Stav: **v1, testovanie**.
    * **Typy stien** v aktívnom view. Typy podľa filtra názvu (predvolene `RCO`) sú predoznačené, výber sa dá upraviť ručne. Viac výrazov sa oddeľuje `;`.
    * **Linky profesií** viditeľné vo view (všetky predoznačené).
    * **Profesie a odstup**: jednotný pre všetky, alebo podľa profesie (mm na každú stranu).
-3. Klikni na **Štart**.
-4. Pozri report v okne pyRevit. Kliknutím na ID ťa Revit presunie na prvok.
+   * **Čo urobiť**: osadiť nové otvory, skontrolovať existujúce, upraviť posunuté/zmenené, zmazať otvory bez kolízie.
+3. Klikni na **Štart**. Všetko sa najprv len vypočíta, do modelu sa nič nezapíše.
+4. Zobrazí sa súhrn (nové / na úpravu / na zmazanie). Vyber **Vykonať**, **Len report** (model sa nezmení) alebo **Zrušiť**.
+5. Pozri report v okne pyRevit. Kliknutím na ID ťa Revit presunie na prvok.
 
 Okno si pamätá posledné nastavenia na ďalšie spustenie.
 
@@ -208,7 +220,15 @@ Potrubia, tvarovky potrubí, izolácia potrubí, VZT potrubia, VZT tvarovky, izo
 * Potrubia a chráničky **menšie ako DN20** sa ignorujú (riešia sa vŕtaním na stavbe).
 * **Šikmé prechody** dostanú väčší otvor, ktorý pokryje celý pretiahnutý prienik. Prechody s odklonom od kolmice nad 5° sú v reporte označené na kontrolu.
 * Prvky **vedené v stene** (odklon od kolmice nad 75°) sa neosádzajú. Vypíšu sa v reporte na ručné riešenie.
-* **Opakované spustenie** nevytvára duplicity: každý otvor si v parametri `ID_otvor` pamätá ID kolidujúcich prvkov.
+* **Opakované spustenie** nevytvára duplicity: prvky, ktoré už majú otvor, sa preskočia (rieši ich kontrola existujúcich).
+
+### Kontrola existujúcich otvorov
+* Kontrolujú sa otvory vybranej rodiny, ktorých hostiteľská stena je viditeľná v aktívnom pohľade.
+* Každý otvor má v `ID_otvor` UniqueId prvkov z linku. Plugin ich vyhľadá v aktuálne načítaných linkoch a znova vypočíta potrebný rozmer a polohu.
+* Výsledok pre každý otvor: **v poriadku**, **posunutý / zmenený rozmer** (rozdiel nad 5 mm), **bez kolízie** (prvok už stenou neprechádza) alebo **prvok zmazaný** v linku.
+* Ak niektorý link nie je načítaný, otvory s nenájdenými prvkami sú **neoverené** a nikdy sa nezmažú.
+* Ak projektant TZB prvok zmaže a nakreslí nanovo, dostane nové UniqueId: starý otvor sa vyhodnotí ako *prvok zmazaný* a navrhne sa nový otvor.
+* Geometria stien sa počíta bez našich otvorov (dočasne sa odstránia v transakcii, ktorá sa vráti), takže sa správne vyhodnotí aj prvok, ktorý prechádza existujúcim otvorom.
 
 ### Požiadavky na rodinu otvoru
 * Generic Model, **wall based**.
@@ -219,7 +239,7 @@ Potrubia, tvarovky potrubí, izolácia potrubí, VZT potrubia, VZT tvarovky, izo
 
 ### Obmedzenia
 * Len obdĺžnikové otvory.
-* Pri zmene linkov profesií sa otvory **neaktualizujú**. Posunutý prvok dostane nový otvor, starý treba zmazať ručne.
+* Zlúčený otvor z viacerých prvkov sa kontroluje ako celok: ak sa prvky od seba vzdialia, otvor sa zväčší, aby pokryl všetky, nerozdelí sa.
 * Do stien v nalinkovaných modeloch sa otvory osadiť nedajú.
 * Vyžaduje **Revit 2024 alebo novší**.
 
