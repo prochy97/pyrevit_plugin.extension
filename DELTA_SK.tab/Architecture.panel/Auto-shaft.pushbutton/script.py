@@ -520,20 +520,6 @@ with forms.ProgressBar(title=u"Auto-shaft – hľadám kolízie ({value} / {max_
                         pocet_malych += 1
                         continue
 
-                # odklon od kolmice; šikmé prechody sa osádzajú,
-                # prvky vedené pozdĺž v stene sa len vypíšu
-                uhol = 0.0
-                smer = smer_prvku(e, ldoc)
-                if smer is not None:
-                    hs = T.OfVector(smer).Normalize()
-                    cos_uhla = min(1.0, abs(hs.DotProduct(n)))
-                    uhol = math.degrees(math.acos(cos_uhla))
-                    if cos_uhla < min_cos_steny:
-                        v_stene.append([li.Name, e.Id.Value, e.Category.Name,
-                                        output.linkify(wall.Id),
-                                        u"{:.1f}°".format(uhol)])
-                        continue
-
                 # presný prienik geometrie
                 kluc_cache = (li.Id.Value, e.Id.Value)
                 if kluc_cache not in solid_cache:
@@ -565,6 +551,20 @@ with forms.ProgressBar(title=u"Auto-shaft – hľadám kolízie ({value} / {max_
                                                 output.linkify(wall.Id)])
                     continue
 
+                # odklon od kolmice (až pri skutočnom prieniku); šikmé prechody sa osádzajú,
+                # prvky vedené pozdĺž v stene sa len vypíšu
+                uhol = 0.0
+                smer = smer_prvku(e, ldoc)
+                if smer is not None:
+                    hs = T.OfVector(smer).Normalize()
+                    cos_uhla = min(1.0, abs(hs.DotProduct(n)))
+                    uhol = math.degrees(math.acos(cos_uhla))
+                    if cos_uhla < min_cos_steny:
+                        v_stene.append([li.Name, e.Id.Value, e.Category.Name,
+                                        output.linkify(wall.Id),
+                                        u"{:.1f}°".format(uhol)])
+                        continue
+
                 kluc = u"{}@{}".format(e.UniqueId, wall.Id.Value)
                 if kluc in existujuce:
                     pocet_duplicit += 1
@@ -587,7 +587,7 @@ if otvory_na_stene:
             symbol.Activate()
             doc.Regenerate()
 
-        na_posun = []   # (instancia, cielovy bod, smer steny, level)
+        na_posun = []   # (instancia, stred otvoru, smer steny, level, vyska)
         kontrola_parametrov = True
 
         for wall_id_val, rects in otvory_na_stene.items():
@@ -629,25 +629,26 @@ if otvory_na_stene:
                 ps.Set(sirka)
                 pv.Set(vyska)
                 pl.Set(u";".join(r[4]))
-                na_posun.append((inst, ciel, d, level))
+                na_posun.append((inst, ciel, d, level, vyska))
                 osadene.append([output.linkify(inst.Id), output.linkify(wall.Id),
                                 int(round(ft2mm(sirka))), int(round(ft2mm(vyska))),
                                 len(r[4]),
                                 u"{:.1f}°".format(r[5]) if r[5] > TOLERANCIA_UHLA_DEG
                                 else u"–"])
 
-        # výška: priamo cez "Elevation from Level" (stred otvoru = počiatok rodiny)
-        for inst, ciel, smer, level in na_posun:
+        # výška: "Elevation from Level" = spodná hrana otvoru
+        # (spodok voidu je v rodine na Ref. Level)
+        for inst, ciel, smer, level, vyska in na_posun:
             pe = inst.get_Parameter(BIP.INSTANCE_ELEVATION_PARAM)
             if pe is None or pe.IsReadOnly:
                 raise Exception(u"Rodina nemá zapisovateľný parameter "
                                 u"Elevation from Level.")
-            pe.Set(ciel.Z - level.ProjectElevation)
+            pe.Set(ciel.Z - vyska / 2.0 - level.ProjectElevation)
 
         # poloha pozdĺž steny: posun iba v smere steny (bez zmeny výšky)
         doc.Regenerate()
         tol = mm2ft(0.5)
-        for inst, ciel, smer, level in na_posun:
+        for inst, ciel, smer, level, vyska in na_posun:
             skut = inst.Location.Point
             posun = (ciel - skut).DotProduct(smer)
             if abs(posun) > tol:
