@@ -81,7 +81,7 @@ Pipes, Pipe Fittings, Pipe Insulation, Ducts, Duct Fittings, Duct Insulation, Ca
 
 ### Opening family requirements
 * Generic Model, **wall based**.
-* Insertion point in the **center of the opening** (symmetric around *Center (Left/Right)* and *Ref. Level*). The height is set through *Elevation from Level*.
+* Opening **centered on *Center (Left/Right)***, with its **bottom edge on *Ref. Level***. *Elevation from Level* is then the bottom edge of the opening.
 * Void locked to **both wall faces**, so it cuts the full wall thickness.
 * Instance parameters: `Sirka_otvoru` (Length), `Vyska_otvoru` (Length), `ID_otvor` (Text).
 * Parameter names can be changed at the top of `script.py` (section NASTAVENIA), together with the rounding, DN limit and skew tolerance.
@@ -212,7 +212,7 @@ Potrubia, tvarovky potrubí, izolácia potrubí, VZT potrubia, VZT tvarovky, izo
 
 ### Požiadavky na rodinu otvoru
 * Generic Model, **wall based**.
-* Vkladací bod v **strede otvoru** (symetricky okolo *Center (Left/Right)* a *Ref. Level*). Výška sa nastavuje cez *Elevation from Level*.
+* Otvor **vycentrovaný na *Center (Left/Right)***, **spodná hrana na *Ref. Level***. *Elevation from Level* je potom výška spodnej hrany otvoru.
 * Void zamknutý na **obe líca steny**, aby prerezal celú hrúbku.
 * Inštančné parametre: `Sirka_otvoru` (Length), `Vyska_otvoru` (Length), `ID_otvor` (Text).
 * Názvy parametrov sa dajú zmeniť na začiatku `script.py` (sekcia NASTAVENIA), spolu so zaokrúhlením, limitom DN a toleranciou šikmých prechodov.
