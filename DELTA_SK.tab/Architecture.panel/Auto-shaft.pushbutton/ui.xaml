@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Auto-shaft" Width="540" Height="760" MinWidth="460" MinHeight="600"
+        Title="Auto-shaft" Width="560" Height="880" MinWidth="460" MinHeight="680"
         WindowStartupLocation="CenterScreen" ShowInTaskbar="False"
         ResizeMode="CanResizeWithGrip">
     <Window.Resources>
@@ -30,6 +30,7 @@
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
@@ -96,6 +97,21 @@
                                   Margin="0,2" Content="Elektro (žľaby, chráničky)"/>
                         <TextBox x:Name="ele_tb" Grid.Row="2" Grid.Column="1" Margin="0,2"/>
                     </Grid>
+                </StackPanel>
+            </GroupBox>
+
+            <!-- 5. Akcie -->
+            <GroupBox Grid.Row="4" Header="5. Čo urobiť">
+                <StackPanel>
+                    <CheckBox x:Name="new_cb" Margin="0,2" Content="Osadiť nové otvory"/>
+                    <CheckBox x:Name="check_cb" Margin="0,2"
+                              Content="Skontrolovať existujúce otvory v aktívnom view"/>
+                    <CheckBox x:Name="update_cb" Margin="18,2,0,2"
+                              Content="Upraviť posunuté a zmenené otvory"/>
+                    <CheckBox x:Name="delete_cb" Margin="18,2,0,2"
+                              Content="Zmazať otvory bez kolízie alebo so zmazaným prvkom"/>
+                    <TextBlock Margin="0,6,0,0" FontSize="11" Foreground="Gray" TextWrapping="Wrap"
+                               Text="Pred zápisom do modelu sa zobrazí súhrn: Vykonať / Len report / Zrušiť."/>
                 </StackPanel>
             </GroupBox>
         </Grid>
