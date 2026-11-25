@@ -9,8 +9,8 @@ Custom **pyRevit** extension with automation tools for Autodesk Revit. Tools app
 | Panel | Tool | Purpose |
 |---|---|---|
 | Architecture | **AutoJoin** | Automatic Join Geometry in the active view with structural priority |
+| Architecture | **Auto-shaft** | Automatic rectangular openings in structural walls at clashes with linked MEP models |
 | YIT | **TALO kódy** | Naming of element types and parameters per YIT EIR (TALO 2000 codes) |
-| YIT | **Auto-shaft** | Automatic rectangular openings in structural walls at clashes with linked MEP models |
 
 ---
 
@@ -45,29 +45,6 @@ Walls, Floors, Ceilings, Stairs, Columns, Structural Columns, Structural Foundat
 * **Groups:** Revit does not allow joining a group member with an element outside the group. Joins between members of the same group must be done manually in **Edit Group** (applies to all instances).
 * **Stairs** usually do not support Join Geometry and will appear in the report as failed.
 * Requires **Revit 2023 or newer**.
-
-## TALO kódy (YIT)
-
-Renames element types and fills parameters according to the YIT EIR (chapter 6.4, Appendix A – TALO 2000).
-Status: **v1, in testing** (block A of Viedenská cesta).
-
-### How to use
-1. *(Optional)* Select elements in the model, or use **Pick elements in model…** in the window.
-2. Choose a category – the left list shows EIR codes for it, the right list shows project types.
-3. Select one code on the left and one or more types on the right → **Prepare preview**.
-4. Check / edit the new names → **Write to model** (one transaction, undone with a single **Ctrl+Z**).
-
-### What it writes (per type)
-Type name `{code}_{description}`, `1_Kod_prvku`, `1_Kategoria`, Assembly Code (+ `1_TALO_kod` if present),
-IfcExportAs, and Type Mark (e.g. `OH.305`) for codes with a drawing abbreviation.
-If only some instances of a type are selected, a duplicate type is created for them.
-
-### Rules table
-The rules are read from `data/YIT_EIR_TALO_mapovanie_AA.xlsx` (sheet *Mapovanie*). Edit the table, not the code.
-Parameter and column names are in `lib/yit_talo/config.py`.
-
-### Not in v1
-Automatic code suggestions, renaming families, cross-model numbering check for blocks A/B/C (v1 only exports used codes to CSV).
 
 ## Auto-shaft
 
@@ -109,6 +86,29 @@ Pipes, Pipe Fittings, Pipe Insulation, Ducts, Duct Fittings, Duct Insulation, Ca
 * Openings cannot be placed into walls in linked models.
 * Requires **Revit 2024 or newer**.
 
+## TALO kódy (YIT)
+
+Renames element types and fills parameters according to the YIT EIR (chapter 6.4, Appendix A – TALO 2000).
+Status: **v1, in testing** (block A of Viedenská cesta).
+
+### How to use
+1. *(Optional)* Select elements in the model, or use **Pick elements in model…** in the window.
+2. Choose a category – the left list shows EIR codes for it, the right list shows project types.
+3. Select one code on the left and one or more types on the right → **Prepare preview**.
+4. Check / edit the new names → **Write to model** (one transaction, undone with a single **Ctrl+Z**).
+
+### What it writes (per type)
+Type name `{code}_{description}`, `1_Kod_prvku`, `1_Kategoria`, Assembly Code (+ `1_TALO_kod` if present),
+IfcExportAs, and Type Mark (e.g. `OH.305`) for codes with a drawing abbreviation.
+If only some instances of a type are selected, a duplicate type is created for them.
+
+### Rules table
+The rules are read from `data/YIT_EIR_TALO_mapovanie_AA.xlsx` (sheet *Mapovanie*). Edit the table, not the code.
+Parameter and column names are in `lib/yit_talo/config.py`.
+
+### Not in v1
+Automatic code suggestions, renaming families, cross-model numbering check for blocks A/B/C (v1 only exports used codes to CSV).
+
 ---
 
 ## Installation
@@ -134,8 +134,8 @@ Vlastné rozšírenie pre **pyRevit** s automatizačnými nástrojmi pre Autodes
 | Panel | Nástroj | Účel |
 |---|---|---|
 | Architecture | **AutoJoin** | Automatické Join Geometry v aktívnom pohľade s prioritou konštrukcií |
+| Architecture | **Auto-shaft** | Automatické obdĺžnikové otvory v nosných stenách v miestach kolízií s linkami profesií |
 | YIT | **TALO kódy** | Pomenovanie typov a vyplnenie parametrov podľa EIR YIT (kódy TALO 2000) |
-| YIT | **Auto-shaft** | Automatické obdĺžnikové otvory v nosných stenách v miestach kolízií s linkami profesií |
 
 ---
 
@@ -170,29 +170,6 @@ Steny, Stropy/Podlahy, Podhľady, Schodiská, Stĺpy, Nosné stĺpy, Základy, N
 * **Skupiny:** Revit nedovolí spojiť prvok v skupine s prvkom mimo skupiny. Prvky v rovnakej skupine treba spojiť ručne cez **Edit Group** (prenesie sa do všetkých inštancií).
 * **Schodiská** väčšinou Join Geometry nepodporujú a v reporte sa zobrazia ako neúspešné.
 * Vyžaduje **Revit 2023 alebo novší**.
-
-## TALO kódy (YIT)
-
-Premenuje typy a vyplní parametre podľa EIR YIT (kap. 6.4, Príloha A – TALO 2000).
-Stav: **v1, testovanie** (blok A Viedenskej cesty).
-
-### Postup
-1. *(Nepovinné)* Označ prvky v modeli, alebo v okne použi **Vybrať prvky v modeli…**.
-2. Zvoľ kategóriu – vľavo sa zobrazia kódy z EIR, vpravo typy v projekte.
-3. Vľavo vyber jeden kód, vpravo jeden alebo viac typov → **Pripraviť náhľad**.
-4. Skontroluj / uprav nové názvy → **Zapísať do modelu** (jedna transakcia, vrátiš ju jedným **Ctrl+Z**).
-
-### Čo zapisuje (na typ)
-Názov typu `{kód}_{popis}`, `1_Kod_prvku`, `1_Kategoria`, Assembly Code (+ `1_TALO_kod`, ak existuje),
-IfcExportAs a Type Mark (napr. `OH.305`) pri kódoch so skratkou na výkres.
-Ak je vybraná len časť inštancií typu, vytvorí sa pre ne duplikát typu.
-
-### Tabuľka pravidiel
-Pravidlá sa čítajú z `data/YIT_EIR_TALO_mapovanie_AA.xlsx` (hárok *Mapovanie*). Upravuje sa tabuľka, nie kód.
-Mená parametrov a stĺpcov sú v `lib/yit_talo/config.py`.
-
-### Mimo v1
-Automatické návrhy kódov, premenovanie rodín, medzimodelová kontrola číslovania blokov A/B/C (v1 vie len export použitých kódov do CSV).
 
 ## Auto-shaft
 
@@ -233,6 +210,29 @@ Potrubia, tvarovky potrubí, izolácia potrubí, VZT potrubia, VZT tvarovky, izo
 * Pri zmene linkov profesií sa otvory **neaktualizujú**. Posunutý prvok dostane nový otvor, starý treba zmazať ručne.
 * Do stien v nalinkovaných modeloch sa otvory osadiť nedajú.
 * Vyžaduje **Revit 2024 alebo novší**.
+
+## TALO kódy (YIT)
+
+Premenuje typy a vyplní parametre podľa EIR YIT (kap. 6.4, Príloha A – TALO 2000).
+Stav: **v1, testovanie** (blok A Viedenskej cesty).
+
+### Postup
+1. *(Nepovinné)* Označ prvky v modeli, alebo v okne použi **Vybrať prvky v modeli…**.
+2. Zvoľ kategóriu – vľavo sa zobrazia kódy z EIR, vpravo typy v projekte.
+3. Vľavo vyber jeden kód, vpravo jeden alebo viac typov → **Pripraviť náhľad**.
+4. Skontroluj / uprav nové názvy → **Zapísať do modelu** (jedna transakcia, vrátiš ju jedným **Ctrl+Z**).
+
+### Čo zapisuje (na typ)
+Názov typu `{kód}_{popis}`, `1_Kod_prvku`, `1_Kategoria`, Assembly Code (+ `1_TALO_kod`, ak existuje),
+IfcExportAs a Type Mark (napr. `OH.305`) pri kódoch so skratkou na výkres.
+Ak je vybraná len časť inštancií typu, vytvorí sa pre ne duplikát typu.
+
+### Tabuľka pravidiel
+Pravidlá sa čítajú z `data/YIT_EIR_TALO_mapovanie_AA.xlsx` (hárok *Mapovanie*). Upravuje sa tabuľka, nie kód.
+Mená parametrov a stĺpcov sú v `lib/yit_talo/config.py`.
+
+### Mimo v1
+Automatické návrhy kódov, premenovanie rodín, medzimodelová kontrola číslovania blokov A/B/C (v1 vie len export použitých kódov do CSV).
 
 ---
 
