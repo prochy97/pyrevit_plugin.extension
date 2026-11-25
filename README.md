@@ -10,6 +10,7 @@ Custom **pyRevit** extension with automation tools for Autodesk Revit. Tools app
 |---|---|---|
 | Architecture | **AutoJoin** | Automatic Join Geometry in the active view with structural priority |
 | YIT | **TALO kódy** | Naming of element types and parameters per YIT EIR (TALO 2000 codes) |
+| YIT | **Auto-shaft** | Automatic rectangular openings in structural walls at clashes with linked MEP models |
 
 ---
 
@@ -68,6 +69,46 @@ Parameter and column names are in `lib/yit_talo/config.py`.
 ### Not in v1
 Automatic code suggestions, renaming families, cross-model numbering check for blocks A/B/C (v1 only exports used codes to CSV).
 
+## Auto-shaft
+
+Finds clashes between **structural walls** in the host model and elements in **linked MEP models**, and places rectangular openings around them with a defined clearance. Works in the **active view only**.
+Status: **v1, in testing**.
+
+### How to use
+1. Open a plan, section, elevation or 3D view with the structural walls and the MEP links switched on.
+2. Run **Auto-shaft** and pick the opening family (e.g. `DGSK_otvor_stena`).
+3. Pick the disciplines: Pipes (plumbing, heating, cooling), HVAC, Electrical.
+4. Choose the clearance: **uniform** for all disciplines, or **per discipline** (mm on each side).
+5. Check the report in the pyRevit output window. Clicking an ID zooms to the element.
+
+The whole operation is undone with a single **Ctrl+Z**.
+
+### Processed categories
+Pipes, Pipe Fittings, Pipe Insulation, Ducts, Duct Fittings, Duct Insulation, Cable Trays, Cable Tray Fittings, Conduits, Conduit Fittings.
+
+### Rules
+* Only **straight walls with the *Structural* checkbox** in the host model are processed. Curved walls are skipped and listed in the report.
+* Only links **visible in the active view** are used.
+* Clashes are computed from the **actual geometry intersection**, so fittings and insulation are included. Insulation merges with its pipe or duct into one opening.
+* Opening size = element size in the wall + clearance on each side, **rounded up to 10 mm**.
+* Openings that overlap after adding the clearance are **merged into one**.
+* Pipes and conduits **smaller than DN20** are ignored (drilled on site).
+* **Skewed crossings** (more than 5° off perpendicular) and elements running inside the wall are not placed. They are listed in the report for manual solution.
+* **Re-running** does not create duplicates: each opening stores the IDs of the clashing elements in `ID_otvor`.
+
+### Opening family requirements
+* Generic Model, **wall based**.
+* Insertion point in the **center of the opening** (symmetric around *Center (Left/Right)* and *Ref. Level*).
+* Void locked to **both wall faces**, so it cuts the full wall thickness.
+* Instance parameters: `Sirka_otvoru` (Length), `Vyska_otvoru` (Length), `ID_otvor` (Text).
+* Parameter names can be changed at the top of `script.py` (section NASTAVENIA), together with the rounding, DN limit and skew tolerance.
+
+### Limitations
+* Rectangular openings only.
+* Openings are **not updated** when the MEP links change. Moved elements get a new opening, the old one must be deleted manually.
+* Openings cannot be placed into walls in linked models.
+* Requires **Revit 2024 or newer**.
+
 ---
 
 ## Installation
@@ -94,6 +135,7 @@ Vlastné rozšírenie pre **pyRevit** s automatizačnými nástrojmi pre Autodes
 |---|---|---|
 | Architecture | **AutoJoin** | Automatické Join Geometry v aktívnom pohľade s prioritou konštrukcií |
 | YIT | **TALO kódy** | Pomenovanie typov a vyplnenie parametrov podľa EIR YIT (kódy TALO 2000) |
+| YIT | **Auto-shaft** | Automatické obdĺžnikové otvory v nosných stenách v miestach kolízií s linkami profesií |
 
 ---
 
@@ -151,6 +193,46 @@ Mená parametrov a stĺpcov sú v `lib/yit_talo/config.py`.
 
 ### Mimo v1
 Automatické návrhy kódov, premenovanie rodín, medzimodelová kontrola číslovania blokov A/B/C (v1 vie len export použitých kódov do CSV).
+
+## Auto-shaft
+
+Nájde kolízie **nosných stien** v našom modeli s prvkami v **nalinkovaných modeloch profesií** a osadí okolo nich obdĺžnikové otvory so zadaným odstupom. Pracuje **len v aktívnom pohľade**.
+Stav: **v1, testovanie**.
+
+### Postup
+1. Otvor pôdorys, rez, pohľad alebo 3D so zobrazenými nosnými stenami a zapnutými linkami profesií.
+2. Spusti **Auto-shaft** a vyber rodinu otvoru (napr. `DGSK_otvor_stena`).
+3. Vyber profesie: Potrubia (ZTI, ÚK, chladenie), VZT, Elektro.
+4. Zvoľ odstup: **jednotný** pre všetky profesie, alebo **podľa profesie** (mm na každú stranu).
+5. Pozri report v okne pyRevit. Kliknutím na ID ťa Revit presunie na prvok.
+
+Celú operáciu vrátiš jedným **Ctrl+Z**.
+
+### Spracované kategórie
+Potrubia, tvarovky potrubí, izolácia potrubí, VZT potrubia, VZT tvarovky, izolácia VZT, káblové žľaby, tvarovky žľabov, chráničky, tvarovky chráničiek.
+
+### Pravidlá
+* Spracujú sa len **rovné steny so zaškrtnutým *Structural*** v našom modeli. Oblúkové steny sa preskočia a vypíšu v reporte.
+* Použijú sa len linky **viditeľné v aktívnom pohľade**.
+* Kolízie sa počítajú zo **skutočného prieniku geometrie**, takže sa zarátajú aj tvarovky a izolácia. Izolácia sa zlúči s potrubím do jedného otvoru.
+* Rozmer otvoru = rozmer prvku v stene + odstup na každú stranu, **zaokrúhlené nahor na 10 mm**.
+* Otvory, ktoré sa po pripočítaní odstupu prekrývajú, sa **zlúčia do jedného**.
+* Potrubia a chráničky **menšie ako DN20** sa ignorujú (riešia sa vŕtaním na stavbe).
+* **Šikmé prechody** (odklon od kolmice viac ako 5°) a prvky vedené v stene sa neosádzajú. Vypíšu sa v reporte na ručné riešenie.
+* **Opakované spustenie** nevytvára duplicity: každý otvor si v parametri `ID_otvor` pamätá ID kolidujúcich prvkov.
+
+### Požiadavky na rodinu otvoru
+* Generic Model, **wall based**.
+* Vkladací bod v **strede otvoru** (symetricky okolo *Center (Left/Right)* a *Ref. Level*).
+* Void zamknutý na **obe líca steny**, aby prerezal celú hrúbku.
+* Inštančné parametre: `Sirka_otvoru` (Length), `Vyska_otvoru` (Length), `ID_otvor` (Text).
+* Názvy parametrov sa dajú zmeniť na začiatku `script.py` (sekcia NASTAVENIA), spolu so zaokrúhlením, limitom DN a toleranciou šikmých prechodov.
+
+### Obmedzenia
+* Len obdĺžnikové otvory.
+* Pri zmene linkov profesií sa otvory **neaktualizujú**. Posunutý prvok dostane nový otvor, starý treba zmazať ručne.
+* Do stien v nalinkovaných modeloch sa otvory osadiť nedajú.
+* Vyžaduje **Revit 2024 alebo novší**.
 
 ---
 
