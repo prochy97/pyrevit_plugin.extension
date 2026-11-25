@@ -9,7 +9,7 @@ Custom **pyRevit** extension with automation tools for Autodesk Revit. Tools app
 | Panel | Tool | Purpose |
 |---|---|---|
 | Architecture | **AutoJoin** | Automatic Join Geometry in the active view with structural priority |
-| Architecture | **Auto-shaft** | Automatic rectangular openings in structural walls at clashes with linked MEP models |
+| Architecture | **Auto-shaft** | Automatic rectangular openings in selected wall types at clashes with linked MEP models |
 | YIT | **TALO kódy** | Naming of element types and parameters per YIT EIR (TALO 2000 codes) |
 
 ---
@@ -48,15 +48,20 @@ Walls, Floors, Ceilings, Stairs, Columns, Structural Columns, Structural Foundat
 
 ## Auto-shaft
 
-Finds clashes between **structural walls** in the host model and elements in **linked MEP models**, and places rectangular openings around them with a defined clearance. Works in the **active view only**.
+Finds clashes between **selected wall types** in the host model and elements in **linked MEP models**, and places rectangular openings around them with a defined clearance. Works in the **active view only**. The easiest way to limit the area is a 3D view with a section box.
 Status: **v1, in testing**.
 
 ### How to use
-1. Open a plan, section, elevation or 3D view with the structural walls and the MEP links switched on.
-2. Run **Auto-shaft** and pick the opening family (e.g. `DGSK_otvor_stena`).
-3. Pick the disciplines: Pipes (plumbing, heating, cooling), HVAC, Electrical.
-4. Choose the clearance: **uniform** for all disciplines, or **per discipline** (mm on each side).
-5. Check the report in the pyRevit output window. Clicking an ID zooms to the element.
+1. Open a 3D view (or plan / section), set the section box and switch on the MEP links.
+2. Run **Auto-shaft**. One window opens with all settings:
+   * **Opening family** (default `DGSK_otvor_stena`).
+   * **Wall types** in the active view. Types matching the name filter (default `RCO`) are pre-selected; the selection can be edited manually. More terms are separated by `;`.
+   * **MEP links** visible in the view (all pre-selected).
+   * **Disciplines and clearance**: uniform for all, or per discipline (mm on each side).
+3. Click **Start**.
+4. Check the report in the pyRevit output window. Clicking an ID zooms to the element.
+
+The window remembers the last settings for the next run.
 
 The whole operation is undone with a single **Ctrl+Z**.
 
@@ -64,7 +69,7 @@ The whole operation is undone with a single **Ctrl+Z**.
 Pipes, Pipe Fittings, Pipe Insulation, Ducts, Duct Fittings, Duct Insulation, Cable Trays, Cable Tray Fittings, Conduits, Conduit Fittings.
 
 ### Rules
-* Only **straight walls with the *Structural* checkbox** in the host model are processed. Curved walls are skipped and listed in the report.
+* Only walls of the **selected types** in the host model are processed. Curved walls are skipped and listed in the report.
 * Only links **visible in the active view** are used.
 * Clashes are computed from the **actual geometry intersection**, so fittings and insulation are included. Insulation merges with its pipe or duct into one opening.
 * Opening size = element size in the wall + clearance on each side, **rounded up to 10 mm**.
@@ -134,7 +139,7 @@ Vlastné rozšírenie pre **pyRevit** s automatizačnými nástrojmi pre Autodes
 | Panel | Nástroj | Účel |
 |---|---|---|
 | Architecture | **AutoJoin** | Automatické Join Geometry v aktívnom pohľade s prioritou konštrukcií |
-| Architecture | **Auto-shaft** | Automatické obdĺžnikové otvory v nosných stenách v miestach kolízií s linkami profesií |
+| Architecture | **Auto-shaft** | Automatické obdĺžnikové otvory vo vybraných typoch stien v miestach kolízií s linkami profesií |
 | YIT | **TALO kódy** | Pomenovanie typov a vyplnenie parametrov podľa EIR YIT (kódy TALO 2000) |
 
 ---
@@ -173,15 +178,20 @@ Steny, Stropy/Podlahy, Podhľady, Schodiská, Stĺpy, Nosné stĺpy, Základy, N
 
 ## Auto-shaft
 
-Nájde kolízie **nosných stien** v našom modeli s prvkami v **nalinkovaných modeloch profesií** a osadí okolo nich obdĺžnikové otvory so zadaným odstupom. Pracuje **len v aktívnom pohľade**.
+Nájde kolízie **vybraných typov stien** v našom modeli s prvkami v **nalinkovaných modeloch profesií** a osadí okolo nich obdĺžnikové otvory so zadaným odstupom. Pracuje **len v aktívnom pohľade**. Rozsah sa najjednoduchšie obmedzí 3D pohľadom so section boxom.
 Stav: **v1, testovanie**.
 
 ### Postup
-1. Otvor pôdorys, rez, pohľad alebo 3D so zobrazenými nosnými stenami a zapnutými linkami profesií.
-2. Spusti **Auto-shaft** a vyber rodinu otvoru (napr. `DGSK_otvor_stena`).
-3. Vyber profesie: Potrubia (ZTI, ÚK, chladenie), VZT, Elektro.
-4. Zvoľ odstup: **jednotný** pre všetky profesie, alebo **podľa profesie** (mm na každú stranu).
-5. Pozri report v okne pyRevit. Kliknutím na ID ťa Revit presunie na prvok.
+1. Otvor 3D pohľad (alebo pôdorys / rez), nastav section box a zapni linky profesií.
+2. Spusti **Auto-shaft**. Otvorí sa jedno okno so všetkými nastaveniami:
+   * **Rodina otvoru** (predvolene `DGSK_otvor_stena`).
+   * **Typy stien** v aktívnom view. Typy podľa filtra názvu (predvolene `RCO`) sú predoznačené, výber sa dá upraviť ručne. Viac výrazov sa oddeľuje `;`.
+   * **Linky profesií** viditeľné vo view (všetky predoznačené).
+   * **Profesie a odstup**: jednotný pre všetky, alebo podľa profesie (mm na každú stranu).
+3. Klikni na **Štart**.
+4. Pozri report v okne pyRevit. Kliknutím na ID ťa Revit presunie na prvok.
+
+Okno si pamätá posledné nastavenia na ďalšie spustenie.
 
 Celú operáciu vrátiš jedným **Ctrl+Z**.
 
@@ -189,7 +199,7 @@ Celú operáciu vrátiš jedným **Ctrl+Z**.
 Potrubia, tvarovky potrubí, izolácia potrubí, VZT potrubia, VZT tvarovky, izolácia VZT, káblové žľaby, tvarovky žľabov, chráničky, tvarovky chráničiek.
 
 ### Pravidlá
-* Spracujú sa len **rovné steny so zaškrtnutým *Structural*** v našom modeli. Oblúkové steny sa preskočia a vypíšu v reporte.
+* Spracujú sa len steny **vybraných typov** v našom modeli. Oblúkové steny sa preskočia a vypíšu v reporte.
 * Použijú sa len linky **viditeľné v aktívnom pohľade**.
 * Kolízie sa počítajú zo **skutočného prieniku geometrie**, takže sa zarátajú aj tvarovky a izolácia. Izolácia sa zlúči s potrubím do jedného otvoru.
 * Rozmer otvoru = rozmer prvku v stene + odstup na každú stranu, **zaokrúhlené nahor na 10 mm**.
