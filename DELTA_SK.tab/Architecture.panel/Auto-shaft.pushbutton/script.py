@@ -378,9 +378,23 @@ def su_blizko(a, b, medzera):
     return gap_u < medzera and gap_z < medzera
 
 
+def unikatne(zoznam):
+    """Odstráni duplicity a zachová poradie."""
+    videne = set()
+    vysl = []
+    for x in zoznam:
+        if x not in videne:
+            videne.add(x)
+            vysl.append(x)
+    return vysl
+
+
 def spoj_polozky(polozky, medzera):
     """Spojí blízke položky jednej steny. Položka:
-    {"r": [u0,u1,z0,z1], "kluce": [...], "uhol": x, "vlastnici": set()}"""
+    {"r": [u0,u1,z0,z1], "kluce": [...], "uhol": x, "vlastnici": set()}
+    K medzere sa pripočíta rezerva na zaokrúhlenie rozmerov, aby po
+    zaokrúhlení nahor neostala medzi otvormi menšia medzera, než je nastavená."""
+    medzera = medzera + mm2ft(ZAOKRUHLENIE_MM)
     polozky = [dict(p, r=list(p["r"]), kluce=list(p["kluce"]),
                     vlastnici=set(p["vlastnici"])) for p in polozky]
     zmena = True
@@ -392,7 +406,7 @@ def spoj_polozky(polozky, medzera):
                 if su_blizko(a["r"], b["r"], medzera):
                     a["r"] = [min(a["r"][0], b["r"][0]), max(a["r"][1], b["r"][1]),
                               min(a["r"][2], b["r"][2]), max(a["r"][3], b["r"][3])]
-                    a["kluce"] = a["kluce"] + b["kluce"]
+                    a["kluce"] = unikatne(a["kluce"] + b["kluce"])
                     a["uhol"] = max(a["uhol"], b["uhol"])
                     a["vlastnici"] = a["vlastnici"] | b["vlastnici"]
                     del polozky[j]
@@ -401,6 +415,51 @@ def spoj_polozky(polozky, medzera):
             if zmena:
                 break
     return polozky
+
+
+def obsadeny(eid):
+    """Prvok je v zdieľanom modeli obsadený iným používateľom."""
+    if not doc.IsWorkshared:
+        return False
+    try:
+        return DB.WorksharingUtils.GetCheckoutStatus(doc, eid) == \
+            DB.CheckoutStatus.OwnedByOtherUser
+    except Exception:
+        return False
+
+
+class PotlacVarovania(DB.IFailuresPreprocessor):
+    """Varovania Revitu počas zápisu nepreruší dialógom, len ich zapíše do reportu."""
+    def __init__(self):
+        self.spravy = []
+
+    def PreprocessFailures(self, accessor):
+        for f in accessor.GetFailureMessages():
+            if f.GetSeverity() == DB.FailureSeverity.Warning:
+                self.spravy.append(f.GetDescriptionText())
+                accessor.DeleteWarning(f)
+        return DB.FailureProcessingResult.Continue
+
+
+RUCNY_ZNACKA = u"RUCNY:"
+
+
+def rucny_token(r):
+    """Značka ručného otvoru s jeho minimálnym obdĺžnikom (mm)."""
+    return RUCNY_ZNACKA + u",".join(u"{:.1f}".format(ft2mm(x)) for x in r)
+
+
+def rucny_rect(kluce):
+    """Minimálny obdĺžnik ručného otvoru zo značky v ID_otvor, inak None."""
+    for k in kluce:
+        if k.startswith(RUCNY_ZNACKA):
+            try:
+                hodnoty = [mm2ft(float(x)) for x in k[len(RUCNY_ZNACKA):].split(u",")]
+            except ValueError:
+                return None
+            if len(hodnoty) == 4:
+                return hodnoty
+    return None
 
 
 def rect_z_akt(akt):
@@ -504,7 +563,7 @@ class AutoShaftOkno(forms.WPFWindow):
         for tid, info in sorted(typy_stien.items(),
                                 key=lambda kv: kv[1]["name"].lower()):
             cb = CheckBox()
-            cb.Content = u"{}   ({} ks)".format(info["name"], len(info["walls"]))
+            cb.Content = info["name"]
             cb.Tag = tid
             cb.Margin = Thickness(2)
             self.walls_sp.Children.Add(cb)
@@ -516,12 +575,11 @@ class AutoShaftOkno(forms.WPFWindow):
         self.strom = []   # (gkey, rodič, [(dieťa, link_id, názov linku)])
         for gkey, nazov, popis, _ in SKUPINY:
             deti = [li for li in linky_vo_view if (gkey, li.Id.Value) in pocty]
-            spolu = sum(pocty[(gkey, li.Id.Value)] for li in deti)
             uzol = TreeViewItem()
             rodic = CheckBox()
             rodic.FontWeight = FontWeights.SemiBold
             if deti:
-                rodic.Content = u"{}  –  {}   ({} prvkov)".format(nazov, popis, spolu)
+                rodic.Content = u"{}  –  {}".format(nazov, popis)
                 rodic.IsChecked = cfg_get("skupina_" + gkey, u"1") == u"1"
             else:
                 rodic.Content = u"{}  –  v aktívnom view nie sú".format(nazov)
@@ -935,13 +993,26 @@ if otvory_na_kontrolu:
             kluce = kluce_otvoru(inst)
             inf = {"inst": inst, "id": inst.Id, "wall": wall, "p0": p0, "d": d,
                    "akt": skutocny_otvor(inst, p0, d), "kluce": kluce,
-                   "zmazane": 0, "neoverene": 0, "platne": 0}
+                   "zmazane": 0, "neoverene": 0, "platne": 0,
+                   "rucny_rect": rucny_rect(kluce), "rucny_novy": False}
+            if inf["rucny_rect"] is None and inf["akt"] is not None \
+                    and not any(rozober_kluc(k) for k in kluce):
+                # otvor bez ID = osadený ručne: pokus o prevzatie
+                inf["rucny_rect"] = rect_z_akt(inf["akt"])
+                inf["rucny_novy"] = True
+            if inf["rucny_rect"] is not None:
+                # ručný rozmer je minimum – otvor sa nezmenší ani neposunie
+                pridaj_polozku(wid, inf["rucny_rect"], [], 0.0, inst.Id.Value)
             neoverene_kluce = []
+            wall_solidy = STENY_SOLIDY.get(wid)
             for k in kluce:
                 rozobrany = rozober_kluc(k)
                 if not rozobrany:
                     continue
                 inf["platne"] += 1
+                if not wall_solidy:
+                    neoverene_kluce.append(k)   # geometria steny sa nenačítala
+                    continue
                 link, uid, _ = rozobrany
                 stav_p, li, e = najdi_prvok(link, uid)
                 if stav_p == "neovereny":
@@ -953,12 +1024,14 @@ if otvory_na_kontrolu:
                 bic = bic_of(e)
                 if bic not in odstup_kat:
                     continue
-                stav, data = vyhodnot_prvok(e, li, STENY_SOLIDY[wid], p0, d, n,
+                stav, data = vyhodnot_prvok(e, li, wall_solidy, p0, d, n,
                                             odstup_kat[bic])
                 if stav == "otvor":
                     pridaj_polozku(wid, data[:4],
                                    [plny_kluc(nazov_linku(li), uid, wid)],
                                    data[4], inst.Id.Value)
+                elif stav == "bez" and data:
+                    neoverene_kluce.append(k)   # zlyhal výpočet, radšej nemazať
             if neoverene_kluce and inf["akt"] is not None:
                 # prvky z nenačítaného linku: zachová sa pôvodný rozmer otvoru
                 pridaj_polozku(wid, rect_z_akt(inf["akt"]), neoverene_kluce,
@@ -986,17 +1059,26 @@ if rob_nove and not rob_kontrolu:
 nove_otvory = []        # {"wall", "ciel", "kluce", "uhol"}
 upravy = []             # {"inf", "ciel", "kluce", "uhol", "zlucit": [inf], "len_id"}
 neoverene_otvory = []
+bez_id = []                # ručné otvory, ktorými nič neprechádza – nemenia sa
+prekryte_rucne = []        # ručné otvory v jednej skupine s iným ručným
+rucne_bez_potrubia = []    # prevzaté ručné otvory, z ktorých potrubie zmizlo
 blizko_existujuceho = []   # [stena, id existujúceho otvoru]
 pouzite = set()
 pocet_ok = 0
 
 for wid, polozky in polozky_steny.items():
     wall = doc.GetElement(DB.ElementId(wid))
-    for c in spoj_polozky(polozky, medzera_ft):
+    # väčšie skupiny najprv: ak sa prvky jedného otvoru rozišli do viacerých
+    # skupín, otvor ostane najväčšej a ostatné dostanú nový otvor
+    skupiny = sorted(spoj_polozky(polozky, medzera_ft),
+                     key=lambda c: -(c["r"][1] - c["r"][0]) * (c["r"][3] - c["r"][2]))
+    for c in skupiny:
+        z_rozdelenia = bool(c["vlastnici"]) and not (c["vlastnici"] - pouzite)
+        c["vlastnici"] = c["vlastnici"] - pouzite
         ciel = ciel_otvoru(c["r"])
         if not c["vlastnici"]:
             nove_otvory.append({"wall": wall, "ciel": ciel, "kluce": c["kluce"],
-                                "uhol": c["uhol"]})
+                                "uhol": c["uhol"], "z_rozdelenia": z_rozdelenia})
             ciel_r = [ciel[2] - ciel[0] / 2.0, ciel[2] + ciel[0] / 2.0,
                       ciel[3], ciel[3] + ciel[1]]
             for eid, er in existujuce_na_stene.get(wid, []):
@@ -1006,40 +1088,94 @@ for wid, polozky in polozky_steny.items():
             continue
 
         pouzite.update(c["vlastnici"])
-        poradie = sorted(c["vlastnici"], key=lambda i: -(
-            info_otvorov[i]["akt"][0] * info_otvorov[i]["akt"][1]
-            if info_otvorov[i]["akt"] else 0))
+        def je_rucny(i):
+            return info_otvorov[i]["rucny_rect"] is not None
+
+        def plocha(i):
+            akt_i = info_otvorov[i]["akt"]
+            return akt_i[0] * akt_i[1] if akt_i else 0
+
+        # ručné otvory majú prednosť a nikdy sa nemažú pri spájaní
+        poradie = sorted(c["vlastnici"],
+                         key=lambda i: (0 if je_rucny(i) else 1, -plocha(i)))
         inf = info_otvorov[poradie[0]]
-        zlucit = [info_otvorov[i] for i in poradie[1:]]
+        zlucit = [info_otvorov[i] for i in poradie[1:] if not je_rucny(i)]
+        for i in poradie[1:]:
+            if je_rucny(i):
+                prekryte_rucne.append(info_otvorov[i])
+        prvky = unikatne([k for k in c["kluce"] if rozober_kluc(k)])
+        if inf["rucny_novy"] and not prvky and not zlucit:
+            bez_id.append(inf)          # ručným otvorom nič neprechádza
+            continue
+        kluce_zapis = prvky + ([rucny_token(inf["rucny_rect"])]
+                               if inf["rucny_rect"] is not None else [])
+        if inf["rucny_rect"] is not None and not inf["rucny_novy"] and not prvky \
+                and any(rozober_kluc(k) for k in inf["kluce"]):
+            rucne_bez_potrubia.append(inf)
         akt = inf["akt"]
         zhoda = akt is not None and all(
             abs(a - b) <= tol_kontroly for a, b in zip(ciel, akt))
         if inf["neoverene"]:
             neoverene_otvory.append(inf)
-        if not zlucit and zhoda and set(c["kluce"]) == set(inf["kluce"]):
+        if not zlucit and zhoda and set(kluce_zapis) == set(inf["kluce"]):
             pocet_ok += 1
             continue
-        upravy.append({"inf": inf, "ciel": ciel, "kluce": c["kluce"],
+        upravy.append({"inf": inf, "ciel": ciel, "kluce": kluce_zapis,
                        "uhol": c["uhol"], "zlucit": zlucit,
-                       "len_id": zhoda and not zlucit})
+                       "len_id": zhoda and not zlucit,
+                       "prevzaty": inf["rucny_novy"]})
 
 bez_kolizie = []
 for oid, inf in info_otvorov.items():
     if oid in pouzite:
         continue
+    if not inf["platne"]:
+        bez_id.append(inf)
+        continue
+    if inf["neoverene"]:
+        neoverene_otvory.append(inf)    # nedá sa overiť – nikdy nemazať
+        continue
     inf["stav"] = "zmazany" if inf["platne"] and inf["zmazane"] == inf["platne"] \
         else "bez_kolizie"
     bez_kolizie.append(inf)
 
-upravy_rozmer = [u for u in upravy if not u["len_id"]]
-upravy_id = [u for u in upravy if u["len_id"]]
+upravy_prevzate = [u for u in upravy if u["prevzaty"]]
+upravy_rozmer = [u for u in upravy if not u["prevzaty"] and not u["len_id"]]
+upravy_id = [u for u in upravy if not u["prevzaty"] and u["len_id"]]
 pocet_zlucenych = sum(len(u["zlucit"]) for u in upravy)
 velke_nove = [o for o in nove_otvory if je_velky(o["ciel"])]
-velke_upravy = [u for u in upravy_rozmer if je_velky(u["ciel"])]
+velke_upravy = [u for u in upravy_rozmer + upravy_prevzate if je_velky(u["ciel"])]
 
-akcia_nove = nove_otvory if rob_nove else []
+akcia_nove = [o for o in nove_otvory
+              if (o["z_rozdelenia"] and vysledok["upravit"])
+              or (not o["z_rozdelenia"] and rob_nove)]
 akcia_upravit = upravy if vysledok["upravit"] else []
 akcia_zmazat = bez_kolizie if vysledok["zmazat"] else []
+
+# prvky obsadené iným používateľom (zdieľaný model) sa vynechajú
+obsadene = []    # [prvok, dôvod]
+_nove = []
+for o in akcia_nove:
+    if obsadeny(o["wall"].Id):
+        obsadene.append([output.linkify(o["wall"].Id), u"stena – nový otvor sa neosadí"])
+    else:
+        _nove.append(o)
+akcia_nove = _nove
+_upravy = []
+for u in akcia_upravit:
+    ids = [u["inf"]["id"]] + [z["id"] for z in u["zlucit"]]
+    if any(obsadeny(i) for i in ids):
+        obsadene.append([output.linkify(u["inf"]["id"]), u"otvor – úprava sa vynechá"])
+    else:
+        _upravy.append(u)
+akcia_upravit = _upravy
+_zmazat = []
+for inf in akcia_zmazat:
+    if obsadeny(inf["id"]):
+        obsadene.append([output.linkify(inf["id"]), u"otvor – nezmaže sa"])
+    else:
+        _zmazat.append(inf)
+akcia_zmazat = _zmazat
 
 # =====================================================================
 #  7) SÚHRN A POTVRDENIE
@@ -1058,6 +1194,9 @@ if akcia_nove or akcia_upravit or akcia_zmazat:
         if pocet_zlucenych:
             riadky.append(u"   – spojenie: {} otvorov sa zlúči do susedných{}".format(
                 pocet_zlucenych, vypnute))
+        if upravy_prevzate:
+            riadky.append(u"   – prevzaté ručné otvory: {}{}".format(
+                len(upravy_prevzate), vypnute))
         if upravy_id:
             riadky.append(u"   – doplnenie údajov v {}: {}{}".format(
                 PARAM_LINKID, len(upravy_id), vypnute))
@@ -1074,11 +1213,14 @@ if akcia_nove or akcia_upravit or akcia_zmazat:
                       .format(len(blizko_existujuceho)))
     if v_stene:
         riadky.append(u"Prvky vedené v stene (riešiť ručne): {}".format(len(v_stene)))
+    if obsadene:
+        riadky.append(u"Vynechané – obsadené iným používateľom: {}".format(len(obsadene)))
+    zlucene_vykonat = sum(len(u["zlucit"]) for u in akcia_upravit)
     riadky.append(u"")
     riadky.append(u"Vykonať: {} nových, {} upraviť, {} zmazať{}?".format(
         len(akcia_nove), len(akcia_upravit),
-        len(akcia_zmazat) + (pocet_zlucenych if akcia_upravit else 0),
-        u" (vrátane spojených)" if akcia_upravit and pocet_zlucenych else u""))
+        len(akcia_zmazat) + zlucene_vykonat,
+        u" (vrátane spojených)" if zlucene_vykonat else u""))
     odpoved = forms.alert(u"\n".join(riadky), title=u"Auto-shaft – súhrn",
                           options=[u"Vykonať", u"Len report", u"Zrušiť"],
                           warn_icon=False)
@@ -1089,10 +1231,15 @@ if akcia_nove or akcia_upravit or akcia_zmazat:
 # =====================================================================
 #  8) VYKONANIE
 # =====================================================================
-osadene_ids = {}      # index v nove_otvory -> ElementId
+osadene_ids = {}      # id(záznam nového otvoru) -> ElementId
 zmazane_ids = set()
+varovania = None
 if vykonat:
+    varovania = PotlacVarovania()
     t = DB.Transaction(doc, u"Auto-shaft")
+    moznosti = t.GetFailureHandlingOptions()
+    moznosti.SetFailuresPreprocessor(varovania)
+    t.SetFailureHandlingOptions(moznosti)
     t.Start()
     try:
         if not symbol.IsActive:
@@ -1102,7 +1249,7 @@ if vykonat:
         na_posun = []   # (inst, cieľový stred pozdĺž steny, p0, d)
         na_zmazanie = []
 
-        for i, o in enumerate(akcia_nove):
+        for o in akcia_nove:
             sirka, vyska, u_stred, z_spodok = o["ciel"]
             wall = o["wall"]
             p0, d, n = ram_steny(wall)
@@ -1111,16 +1258,16 @@ if vykonat:
             inst = doc.Create.NewFamilyInstance(
                 DB.XYZ(bod.X, bod.Y, z_spodok), symbol, wall, level,
                 DB.Structure.StructuralType.NonStructural)
-            nastav_otvor(inst, sirka, vyska, z_spodok, level, o["kluce"])
+            nastav_otvor(inst, sirka, vyska, z_spodok, level, unikatne(o["kluce"]))
             na_posun.append((inst, u_stred, p0, d))
-            osadene_ids[i] = inst.Id
+            osadene_ids[id(o)] = inst.Id
 
         for u in akcia_upravit:
             inf = u["inf"]
             inst = inf["inst"]
             sirka, vyska, u_stred, z_spodok = u["ciel"]
             nastav_otvor(inst, sirka, vyska, z_spodok,
-                         doc.GetElement(inst.LevelId), u["kluce"])
+                         doc.GetElement(inst.LevelId), unikatne(u["kluce"]))
             na_posun.append((inst, u_stred, inf["p0"], inf["d"]))
             na_zmazanie.extend(z["id"] for z in u["zlucit"])
 
@@ -1181,7 +1328,7 @@ if not presna_geometria:
                     u"existujúcich otvorov (napr. otvory obsadené iným "
                     u"používateľom). Výsledok môže byť nepresný.")
 
-if rob_nove:
+if rob_nove or nove_otvory:
     output.print_md(u"### Nové otvory")
     output.print_md(u"- {}: **{}**".format(
         u"Osadené" if vykonat else u"Navrhnuté", len(nove_otvory)))
@@ -1198,15 +1345,17 @@ if rob_nove:
     output.print_md(u"- Zlyhaný výpočet geometrie: **{}**".format(len(chyby_geometrie)))
     if nove_otvory:
         riadky = []
-        for i, o in enumerate(nove_otvory):
-            riadky.append([output.linkify(osadene_ids[i]) if i in osadene_ids else u"–",
+        for o in nove_otvory:
+            riadky.append([output.linkify(osadene_ids[id(o)]) if id(o) in osadene_ids
+                           else u"–",
                            output.linkify(o["wall"].Id),
                            rozmer_txt(o["ciel"][0], o["ciel"][1]),
-                           len(o["kluce"]), uhol_txt(o["uhol"]),
-                           statika_txt(o["ciel"])])
+                           len(unikatne(o["kluce"])), uhol_txt(o["uhol"]),
+                           statika_txt(o["ciel"]),
+                           u"rozdelenie existujúceho" if o["z_rozdelenia"] else u"nový"])
         output.print_table(riadky, columns=[u"Otvor", u"Stena", u"Š × V [mm]",
                                             u"Počet prvkov", u"Šikmý prechod",
-                                            u"Statika"])
+                                            u"Statika", u"Pôvod"])
     if blizko_existujuceho:
         output.print_md(u"#### Nové otvory blízko existujúcich – zapni kontrolu na spojenie")
         output.print_table(blizko_existujuceho, columns=[u"Stena", u"Existujúci otvor"])
@@ -1218,9 +1367,14 @@ if rob_kontrolu:
     output.print_md(u"- Posunuté alebo zmenený rozmer: **{}**".format(len(upravy_rozmer)))
     output.print_md(u"- Otvory na spojenie so susedným: **{}**".format(pocet_zlucenych))
     output.print_md(u"- Bez kolízie alebo prvok zmazaný: **{}**".format(len(bez_kolizie)))
+    if upravy_prevzate:
+        output.print_md(u"- Prevzaté ručné otvory: **{}**".format(len(upravy_prevzate)))
     if upravy_id:
         output.print_md(u"- Doplnenie údajov v {}: **{}**".format(
             PARAM_LINKID, len(upravy_id)))
+    if rucne_bez_potrubia:
+        output.print_md(u"- Ručné otvory, z ktorých potrubie zmizlo: **{}**".format(
+            len(rucne_bez_potrubia)))
     if neoverene_otvory:
         output.print_md(u"- Neoverené (link nie je načítaný): **{}**".format(
             len(neoverene_otvory)))
@@ -1242,14 +1396,52 @@ if rob_kontrolu:
             else:
                 povodne = posun = u"?"
             spojene = u", ".join(odkaz(z["id"]) for z in u["zlucit"]) or u"–"
-            riadky.append([odkaz(u["inf"]["id"]), output.linkify(u["inf"]["wall"].Id),
+            riadky.append([odkaz(u["inf"]["id"]),
+                           u"ručný" if u["inf"]["rucny_rect"] is not None else u"–",
+                           output.linkify(u["inf"]["wall"].Id),
                            povodne, rozmer_txt(ciel[0], ciel[1]), posun, spojene,
                            uhol_txt(u["uhol"]), statika_txt(ciel), akcia])
         output.print_md(u"#### Posunuté, zmenené a spájané otvory")
-        output.print_table(riadky, columns=[u"Otvor", u"Stena", u"Pôvodne Š × V",
-                                            u"Nové Š × V", u"Posun [mm]",
+        output.print_table(riadky, columns=[u"Otvor", u"Ručný", u"Stena",
+                                            u"Pôvodne Š × V", u"Nové Š × V",
+                                            u"Posun [mm]",
                                             u"Spojené otvory (zmažú sa)",
                                             u"Šikmý prechod", u"Statika", u"Akcia"])
+
+    if upravy_prevzate:
+        if not vykonat:
+            akcia = u"len report"
+        elif vysledok["upravit"]:
+            akcia = u"prevzatý"
+        else:
+            akcia = u"neprevzatý (úprava vypnutá)"
+        riadky = []
+        for u in upravy_prevzate:
+            akt = u["inf"]["akt"]
+            ciel = u["ciel"]
+            povodne = rozmer_txt(akt[0], akt[1]) if akt else u"?"
+            zvacseny = akt is not None and (ciel[0] > akt[0] + tol_kontroly
+                                            or ciel[1] > akt[1] + tol_kontroly)
+            riadky.append([odkaz(u["inf"]["id"]), output.linkify(u["inf"]["wall"].Id),
+                           povodne, rozmer_txt(ciel[0], ciel[1]),
+                           u"áno" if zvacseny else u"nie",
+                           len([k for k in u["kluce"] if rozober_kluc(k)]),
+                           u", ".join(odkaz(z["id"]) for z in u["zlucit"]) or u"–",
+                           akcia])
+        output.print_md(u"#### Prevzaté ručné otvory")
+        output.print_md(u"Ručný rozmer ostáva ako minimum – otvor sa môže len "
+                        u"zväčšiť, nezmenší sa, neposunie ani nezmaže.")
+        output.print_table(riadky, columns=[u"Otvor", u"Stena", u"Ručný Š × V",
+                                            u"Nové Š × V", u"Zväčšený",
+                                            u"Počet prvkov",
+                                            u"Spojené otvory (zmažú sa)", u"Akcia"])
+
+    if rucne_bez_potrubia:
+        output.print_md(u"#### Ručné otvory, z ktorých potrubie zmizlo – ponechané, riešiť ručne")
+        output.print_md(u", ".join(odkaz(inf["id"]) for inf in rucne_bez_potrubia))
+    if prekryte_rucne:
+        output.print_md(u"#### Ručné otvory prekryté iným ručným otvorom – skontrolovať")
+        output.print_md(u", ".join(odkaz(inf["id"]) for inf in prekryte_rucne))
 
     if bez_kolizie:
         if not vykonat:
@@ -1272,6 +1464,18 @@ if rob_kontrolu:
                              inf["neoverene"]] for inf in neoverene_otvory],
                            columns=[u"Otvor", u"Stena", u"Počet neoverených prvkov"])
 
+if bez_id:
+    output.print_md(u"### Ručné otvory bez potrubia – ponechané bez zmeny")
+    output.print_md(u"Otvory bez {}, ktorými neprechádza žiadne potrubie z linkov "
+                    u"(napr. rezerva). Plugin ich nemení ani nemaže.".format(PARAM_LINKID))
+    output.print_md(u", ".join(output.linkify(inf["id"]) for inf in bez_id))
+if obsadene:
+    output.print_md(u"### Vynechané – obsadené iným používateľom")
+    output.print_table(obsadene, columns=[u"Prvok", u"Dôsledok"])
+if varovania and varovania.spravy:
+    output.print_md(u"### Varovania Revitu počas zápisu")
+    for sprava in unikatne(varovania.spravy):
+        output.print_md(u"- {} ({}×)".format(sprava, varovania.spravy.count(sprava)))
 if v_stene:
     output.print_md(u"### Prvky vedené v stene – riešiť ručne")
     output.print_table(v_stene, columns=[u"Link", u"ID prvku", u"Kategória",

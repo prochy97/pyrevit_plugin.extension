@@ -73,7 +73,7 @@
                 <GroupBox Grid.Row="2" Header="3. Linky profesií">
                     <DockPanel>
                         <TextBlock DockPanel.Dock="Bottom" Style="{StaticResource Poznamka}"
-                                   Text="Rozbaľ kategóriu a vyber linky, z ktorých sa majú robiť otvory. Počet pri kategórii = prvky viditeľné v aktívnom view vrátane kolien, odbočiek a izolácie."/>
+                                   Text="Rozbaľ kategóriu a vyber linky, z ktorých sa majú robiť otvory. Zobrazujú sa len linky, ktoré majú danú kategóriu viditeľnú v aktívnom view."/>
                         <Border BorderBrush="#FFBBBBBB" BorderThickness="1">
                             <TreeView x:Name="tree" BorderThickness="0" Padding="2"/>
                         </Border>
