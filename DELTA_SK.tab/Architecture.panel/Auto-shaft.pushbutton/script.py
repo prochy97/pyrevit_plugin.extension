@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """Auto-shaft
-Osadí obdĺžnikové otvory do vybraných typov stien v mieste kolízií
-s nalinkovanými profesiami a skontroluje existujúce otvory
+Osadí obdĺžnikové otvory do vybraných typov stien v miestach kolízií
+s nalinkovanými profesiami, spojí blízke otvory a skontroluje existujúce
 (posunuté, zmenené, bez kolízie). Pracuje iba v aktívnom view.
 """
 __title__ = "Auto-shaft"
 __doc__ = (u"Osadí obdĺžnikové otvory do vybraných typov stien v miestach "
-           u"kolízií s linkami profesií a skontroluje existujúce otvory "
-           u"(iba aktívny view).")
+           u"kolízií s linkami profesií, spojí blízke otvory a skontroluje "
+           u"existujúce otvory (iba aktívny view).")
 
 import math
 import os
@@ -19,8 +19,8 @@ clr.AddReference("WindowsBase")
 
 from System.Collections.Generic import List
 from pyrevit import revit, DB, forms, script
-from System.Windows import Thickness
-from System.Windows.Controls import CheckBox
+from System.Windows import Thickness, FontWeights
+from System.Windows.Controls import CheckBox, TreeViewItem
 
 doc = revit.doc
 view = doc.ActiveView
@@ -37,28 +37,32 @@ PARAM_VYSKA = u"Vyska_otvoru"   # inštančný parameter (dĺžka)
 PARAM_LINKID = u"ID_otvor"      # inštančný parameter (text)
 
 ZAOKRUHLENIE_MM = 10.0          # rozmer otvoru sa zaokrúhli nahor
-MIN_DN_MM = 20.0                # prepíše sa hodnotou z okna (pod DN sa ignorujú)
 TOLERANCIA_UHLA_DEG = 5.0       # väčší odklon od kolmice = šikmý prechod (osadí sa, vypíše sa)
 MAX_UHOL_DEG = 75.0             # väčší odklon = prvok vedený v stene (neosadí sa)
 TOLERANCIA_KONTROLY_MM = 5.0    # menší rozdiel polohy/rozmeru = otvor sedí
+MIN_DN_MM = 20.0                # prepíše sa hodnotou z okna
 
-PREDVOLENY_FILTER = u"RCO"      # typy stien označené pri prvom spustení
+# predvolené hodnoty v okne (pri prvom spustení)
+PREDVOLENY_FILTER = u"RCO"
 PREDVOLENA_RODINA = u"DGSK_otvor_stena"
 PREDVOLENY_ODSTUP = u"50"
 PREDVOLENE_MIN_DN = u"20"
+PREDVOLENA_MEDZERA = u"100"
+PREDVOLENY_LIMIT_STATIKA = u"500"
 
-# kľúč (= názov ovládacích prvkov v ui.xaml), popis, kategórie
-PROFESIE = [
-    ("pipes", u"Potrubia (ZTI, ÚK, chladenie)",
+# kľúč (= začiatok názvu poľa odsadenia v ui.xaml), názov, popis, kategórie
+SKUPINY = [
+    ("pipes", u"Pipes", u"potrubia, tvarovky, izolácia",
      [BIC.OST_PipeCurves, BIC.OST_PipeFitting, BIC.OST_PipeInsulations]),
-    ("vzt", u"VZT",
+    ("ducts", u"Ducts", u"VZT potrubia, tvarovky, izolácia",
      [BIC.OST_DuctCurves, BIC.OST_DuctFitting, BIC.OST_DuctInsulations]),
-    ("ele", u"Elektro (žľaby, chráničky)",
-     [BIC.OST_CableTray, BIC.OST_CableTrayFitting,
-      BIC.OST_Conduit, BIC.OST_ConduitFitting]),
+    ("trays", u"Cable Trays", u"káblové žľaby, tvarovky",
+     [BIC.OST_CableTray, BIC.OST_CableTrayFitting]),
+    ("conduits", u"Conduits", u"chráničky, tvarovky",
+     [BIC.OST_Conduit, BIC.OST_ConduitFitting]),
 ]
 
-# kategórie, na ktoré sa uplatní pravidlo DN20
+# kategórie, na ktoré sa uplatní limit DN
 DN_KATEGORIE = set(int(c) for c in [
     BIC.OST_PipeCurves, BIC.OST_PipeFitting, BIC.OST_PipeInsulations,
     BIC.OST_Conduit, BIC.OST_ConduitFitting])
@@ -200,28 +204,6 @@ def rozsah_solidu(solid, p0, d):
     return umin, umax, zmin, zmax
 
 
-def zluc_prekryvy(rects):
-    """Zlúči obdĺžniky, ktoré sa prekrývajú (vrátane odstupu)."""
-    rects = list(rects)
-    zmena = True
-    while zmena:
-        zmena = False
-        for i in range(len(rects)):
-            for j in range(i + 1, len(rects)):
-                a, b = rects[i], rects[j]
-                if (a[0] <= b[1] and b[0] <= a[1] and
-                        a[2] <= b[3] and b[2] <= a[3]):
-                    rects[i] = [min(a[0], b[0]), max(a[1], b[1]),
-                                min(a[2], b[2]), max(a[3], b[3]),
-                                a[4] + b[4], max(a[5], b[5])]
-                    del rects[j]
-                    zmena = True
-                    break
-            if zmena:
-                break
-    return rects
-
-
 def nazov_symbolu(sym):
     p = sym.get_Parameter(BIP.SYMBOL_NAME_PARAM)
     typ = p.AsString() if p else u"?"
@@ -302,15 +284,6 @@ def vyhodnot_prvok(e, li, wall_solidy, p0, d, n, odstup):
                      rozsah[2] - odstup, rozsah[3] + odstup, uhol]
 
 
-def unia(rects):
-    """Spojí všetky obdĺžniky do jedného (pre kontrolu existujúceho otvoru)."""
-    r = list(rects[0])
-    for b in rects[1:]:
-        r = [min(r[0], b[0]), max(r[1], b[1]), min(r[2], b[2]), max(r[3], b[3]),
-             r[4] + b[4], max(r[5], b[5])]
-    return r
-
-
 def ciel_otvoru(r):
     """(šírka, výška, stred pozdĺž steny, spodná hrana) z obdĺžnika."""
     sirka = zaokruhli_nahor(r[1] - r[0])
@@ -370,6 +343,71 @@ def uhol_txt(uhol):
     return u"{:.1f}°".format(uhol) if uhol > TOLERANCIA_UHLA_DEG else u"–"
 
 
+def nazov_linku(li):
+    """Názov súboru linku (typ), napr. VIEZPSP_A0_ZT.rvt."""
+    typ = doc.GetElement(li.GetTypeId())
+    return DB.Element.Name.GetValue(typ) if typ is not None else li.Name
+
+
+def rozober_kluc(kluc):
+    """'link|uid@stena' (nový) alebo 'uid@stena' (starý) -> (link, uid, stena)."""
+    link = None
+    if u"|" in kluc:
+        link, kluc = kluc.split(u"|", 1)
+    if u"@" not in kluc:
+        return None
+    uid, stena = kluc.rsplit(u"@", 1)
+    return link, uid, stena
+
+
+def plny_kluc(link, uid, wid):
+    return u"{}|{}@{}".format(link, uid, wid)
+
+
+def identita(uid, wid):
+    return u"{}@{}".format(uid, wid)
+
+
+def su_blizko(a, b, medzera):
+    """Obdĺžniky [u0, u1, z0, z1] sa prekrývajú alebo je medzi nimi
+    menej steny ako 'medzera'."""
+    gap_u = max(b[0] - a[1], a[0] - b[1])
+    gap_z = max(b[2] - a[3], a[2] - b[3])
+    if gap_u <= 0 and gap_z <= 0:
+        return True
+    return gap_u < medzera and gap_z < medzera
+
+
+def spoj_polozky(polozky, medzera):
+    """Spojí blízke položky jednej steny. Položka:
+    {"r": [u0,u1,z0,z1], "kluce": [...], "uhol": x, "vlastnici": set()}"""
+    polozky = [dict(p, r=list(p["r"]), kluce=list(p["kluce"]),
+                    vlastnici=set(p["vlastnici"])) for p in polozky]
+    zmena = True
+    while zmena:
+        zmena = False
+        for i in range(len(polozky)):
+            for j in range(i + 1, len(polozky)):
+                a, b = polozky[i], polozky[j]
+                if su_blizko(a["r"], b["r"], medzera):
+                    a["r"] = [min(a["r"][0], b["r"][0]), max(a["r"][1], b["r"][1]),
+                              min(a["r"][2], b["r"][2]), max(a["r"][3], b["r"][3])]
+                    a["kluce"] = a["kluce"] + b["kluce"]
+                    a["uhol"] = max(a["uhol"], b["uhol"])
+                    a["vlastnici"] = a["vlastnici"] | b["vlastnici"]
+                    del polozky[j]
+                    zmena = True
+                    break
+            if zmena:
+                break
+    return polozky
+
+
+def rect_z_akt(akt):
+    """[u0,u1,z0,z1] zo skutočného otvoru (šírka, výška, stred u, spodok z)."""
+    return [akt[2] - akt[0] / 2.0, akt[2] + akt[0] / 2.0, akt[3], akt[3] + akt[1]]
+
+
 # =====================================================================
 #  1) KONTROLA VIEW A ZBER ÚDAJOV
 # =====================================================================
@@ -412,6 +450,20 @@ if not linky_vo_view:
     forms.alert(u"V aktívnom view nie je zapnutý žiadny načítaný link.",
                 exitscript=True)
 
+# počty prvkov podľa kategórie a linku v aktívnom view
+pocty = {}
+for li in linky_vo_view:
+    for gkey, _, _, kats in SKUPINY:
+        try:
+            pocet = DB.FilteredElementCollector(doc, view.Id, li.Id) \
+                .WherePasses(DB.ElementMulticategoryFilter(
+                    List[DB.BuiltInCategory](kats))) \
+                .GetElementCount()
+        except Exception:
+            pocet = 0
+        if pocet:
+            pocty[(gkey, li.Id.Value)] = pocet
+
 cfg = script.get_config()
 
 
@@ -446,7 +498,7 @@ class AutoShaftOkno(forms.WPFWindow):
                     break
         self.family_cb.SelectedIndex = idx
 
-        # 2. typy stien
+        # 2. konštrukcie
         self.filter_tb.Text = cfg_get("filter", PREDVOLENY_FILTER)
         self.wall_cbs = []
         for tid, info in sorted(typy_stien.items(),
@@ -459,24 +511,44 @@ class AutoShaftOkno(forms.WPFWindow):
             self.wall_cbs.append((cb, info["name"]))
         self.oznac_podla_filtra()
 
-        # 3. linky
-        self.link_cbs = []
-        for li in linky_vo_view:
-            cb = CheckBox()
-            cb.Content = li.Name
-            cb.Tag = li.Id.Value
-            cb.IsChecked = True
-            cb.Margin = Thickness(2)
-            self.links_sp.Children.Add(cb)
-            self.link_cbs.append(cb)
+        # 3. strom kategórie -> linky
+        vypnute = set(cfg_get("vypnute_linky", u"").split(u";"))
+        self.strom = []   # (gkey, rodič, [(dieťa, link_id, názov linku)])
+        for gkey, nazov, popis, _ in SKUPINY:
+            deti = [li for li in linky_vo_view if (gkey, li.Id.Value) in pocty]
+            spolu = sum(pocty[(gkey, li.Id.Value)] for li in deti)
+            uzol = TreeViewItem()
+            rodic = CheckBox()
+            rodic.FontWeight = FontWeights.SemiBold
+            if deti:
+                rodic.Content = u"{}  –  {}   ({} prvkov)".format(nazov, popis, spolu)
+                rodic.IsChecked = cfg_get("skupina_" + gkey, u"1") == u"1"
+            else:
+                rodic.Content = u"{}  –  v aktívnom view nie sú".format(nazov)
+                rodic.IsChecked = False
+                rodic.IsEnabled = False
+            uzol.Header = rodic
+            deti_cb = []
+            for li in deti:
+                lname = nazov_linku(li)
+                cb = CheckBox()
+                cb.Content = u"{}   ({} ks)".format(lname, pocty[(gkey, li.Id.Value)])
+                cb.IsChecked = bool(rodic.IsChecked) and \
+                    (gkey + u"|" + lname) not in vypnute
+                polozka = TreeViewItem()
+                polozka.Header = cb
+                uzol.Items.Add(polozka)
+                deti_cb.append((cb, li.Id.Value, lname))
+                cb.Click += self._klik_dieta(rodic, deti_cb)
+            rodic.Click += self._klik_rodic(rodic, deti_cb)
+            self.tree.Items.Add(uzol)
+            self.strom.append((gkey, rodic, deti_cb))
 
-        # 4. profesie a odstup
+        # 4. odsadenie
         self.uniform_tb.Text = cfg_get("odstup", PREDVOLENY_ODSTUP)
-        for key, _, _ in PROFESIE:
-            getattr(self, key + "_cb").IsChecked = \
-                cfg_get("prof_" + key, u"1") == u"1"
-            getattr(self, key + "_tb").Text = \
-                cfg_get("odstup_" + key, PREDVOLENY_ODSTUP)
+        for gkey, _, _, _ in SKUPINY:
+            getattr(self, gkey + "_tb").Text = \
+                cfg_get("odstup_" + gkey, PREDVOLENY_ODSTUP)
         self.mindn_tb.Text = cfg_get("min_dn", PREDVOLENE_MIN_DN)
         if cfg_get("rezim", u"jednotny") == u"jednotny":
             self.uniform_rb.IsChecked = True
@@ -484,7 +556,11 @@ class AutoShaftOkno(forms.WPFWindow):
             self.per_rb.IsChecked = True
         self.prepni_rezim()
 
-        # 5. akcie
+        # 5. spájanie a veľké otvory
+        self.gap_tb.Text = cfg_get("medzera", PREDVOLENA_MEDZERA)
+        self.limit_tb.Text = cfg_get("limit_statika", PREDVOLENY_LIMIT_STATIKA)
+
+        # 6. typ akcie
         self.new_cb.IsChecked = cfg_get("akcia_nove", u"1") == u"1"
         self.check_cb.IsChecked = cfg_get("akcia_kontrola", u"1") == u"1"
         self.update_cb.IsChecked = cfg_get("akcia_upravit", u"1") == u"1"
@@ -502,6 +578,20 @@ class AutoShaftOkno(forms.WPFWindow):
         self.start_b.Click += self.start
         self.cancel_b.Click += lambda s, e: self.Close()
 
+    @staticmethod
+    def _klik_rodic(rodic, deti_cb):
+        def handler(sender, args):
+            stav = bool(rodic.IsChecked)
+            for cb, _, _ in deti_cb:
+                cb.IsChecked = stav
+        return handler
+
+    @staticmethod
+    def _klik_dieta(rodic, deti_cb):
+        def handler(sender, args):
+            rodic.IsChecked = any(bool(cb.IsChecked) for cb, _, _ in deti_cb)
+        return handler
+
     def oznac_podla_filtra(self):
         vyrazy = [v.strip().lower()
                   for v in (self.filter_tb.Text or u"").replace(",", ";").split(";")
@@ -516,8 +606,8 @@ class AutoShaftOkno(forms.WPFWindow):
     def prepni_rezim(self):
         jednotny = bool(self.uniform_rb.IsChecked)
         self.uniform_tb.IsEnabled = jednotny
-        for key, _, _ in PROFESIE:
-            getattr(self, key + "_tb").IsEnabled = not jednotny
+        for gkey, _, _, _ in SKUPINY:
+            getattr(self, gkey + "_tb").IsEnabled = not jednotny
 
     def prepni_kontrolu(self):
         zapnuta = bool(self.check_cb.IsChecked)
@@ -528,64 +618,70 @@ class AutoShaftOkno(forms.WPFWindow):
         nove = bool(self.new_cb.IsChecked)
         kontrola = bool(self.check_cb.IsChecked)
         if not (nove or kontrola):
-            forms.alert(u"Zvoľ aspoň jednu akciu v časti 5.")
+            forms.alert(u"Zvoľ aspoň jednu akciu v časti 6.")
             return
         if self.family_cb.SelectedIndex < 0:
             forms.alert(u"Vyber rodinu otvoru.")
             return
         steny_ids = set(cb.Tag for cb, _ in self.wall_cbs if cb.IsChecked)
-        link_ids = set(cb.Tag for cb in self.link_cbs if cb.IsChecked)
-        profesie = [key for key, _, _ in PROFESIE
-                    if getattr(self, key + "_cb").IsChecked]
+        pary = set()
+        for gkey, _, deti_cb in self.strom:
+            for cb, lid, _ in deti_cb:
+                if cb.IsChecked:
+                    pary.add((gkey, lid))
         if nove and not steny_ids:
-            forms.alert(u"Pre osadenie nových otvorov označ aspoň jeden typ steny.")
+            forms.alert(u"Pre osadenie nových otvorov označ aspoň jeden typ konštrukcie.")
             return
-        if nove and not link_ids:
-            forms.alert(u"Pre osadenie nových otvorov označ aspoň jeden link.")
-            return
-        if nove and not profesie:
-            forms.alert(u"Pre osadenie nových otvorov označ aspoň jednu profesiu.")
+        if nove and not pary:
+            forms.alert(u"Pre osadenie nových otvorov označ aspoň jeden link v časti 3.")
             return
 
-        # odstupy pre všetky profesie (kontrola existujúcich ich potrebuje vždy)
         jednotny = bool(self.uniform_rb.IsChecked)
-        popisy = dict((k, p) for k, p, _ in PROFESIE)
         odstupy = {}
         if jednotny:
             v = parse_mm(self.uniform_tb.Text)
             if v is None:
-                forms.alert(u"Jednotný odstup musí byť kladné číslo v mm.")
+                forms.alert(u"Jednotné odsadenie musí byť kladné číslo v mm.")
                 return
-            for key, _, _ in PROFESIE:
-                odstupy[key] = v
+            for gkey, _, _, _ in SKUPINY:
+                odstupy[gkey] = v
         else:
-            for key, _, _ in PROFESIE:
-                v = parse_mm(getattr(self, key + "_tb").Text)
+            for gkey, nazov, _, _ in SKUPINY:
+                v = parse_mm(getattr(self, gkey + "_tb").Text)
                 if v is None:
-                    if key in profesie or kontrola:
-                        forms.alert(u"Odstup pre '{}' musí byť kladné číslo v mm."
-                                    .format(popisy[key]))
-                        return
-                    v = float(PREDVOLENY_ODSTUP)
-                odstupy[key] = v
-
+                    forms.alert(u"Odsadenie pre {} musí byť kladné číslo v mm."
+                                .format(nazov))
+                    return
+                odstupy[gkey] = v
         min_dn = parse_mm(self.mindn_tb.Text)
-        if min_dn is None:
-            forms.alert(u"Minimálne DN musí byť kladné číslo (0 = bez obmedzenia).")
-            return
+        medzera = parse_mm(self.gap_tb.Text)
+        limit = parse_mm(self.limit_tb.Text)
+        for hodnota, popis in ((min_dn, u"Limit DN"), (medzera, u"Medzera medzi otvormi"),
+                               (limit, u"Limit pre statika")):
+            if hodnota is None:
+                forms.alert(u"{} musí byť kladné číslo.".format(popis))
+                return
 
         # uloženie nastavení na ďalšie spustenie
         try:
             cfg.set_option("rodina", self.family_cb.SelectedItem)
             cfg.set_option("filter", self.filter_tb.Text or u"")
-            cfg.set_option("rezim", u"jednotny" if jednotny else u"profesie")
+            cfg.set_option("rezim", u"jednotny" if jednotny else u"kategorie")
             cfg.set_option("odstup", self.uniform_tb.Text or u"")
+            for gkey, _, _, _ in SKUPINY:
+                cfg.set_option("odstup_" + gkey, getattr(self, gkey + "_tb").Text or u"")
+            vypnute = []
+            for gkey, rodic, deti_cb in self.strom:
+                if rodic.IsEnabled:
+                    cfg.set_option("skupina_" + gkey,
+                                   u"1" if rodic.IsChecked else u"0")
+                for cb, _, lname in deti_cb:
+                    if not cb.IsChecked:
+                        vypnute.append(gkey + u"|" + lname)
+            cfg.set_option("vypnute_linky", u";".join(vypnute))
             cfg.set_option("min_dn", self.mindn_tb.Text or u"")
-            for key, _, _ in PROFESIE:
-                cfg.set_option("prof_" + key,
-                               u"1" if getattr(self, key + "_cb").IsChecked else u"0")
-                cfg.set_option("odstup_" + key,
-                               getattr(self, key + "_tb").Text or u"")
+            cfg.set_option("medzera", self.gap_tb.Text or u"")
+            cfg.set_option("limit_statika", self.limit_tb.Text or u"")
             for nazov, cb in (("akcia_nove", self.new_cb),
                               ("akcia_kontrola", self.check_cb),
                               ("akcia_upravit", self.update_cb),
@@ -598,10 +694,11 @@ class AutoShaftOkno(forms.WPFWindow):
         self.result = {
             "rodina": self.family_cb.SelectedItem,
             "steny": steny_ids,
-            "linky": link_ids,
-            "profesie": profesie,
+            "pary": pary,
             "odstupy": odstupy,
             "min_dn": min_dn,
+            "medzera": medzera,
+            "limit": limit,
             "nove": nove,
             "kontrola": kontrola,
             "upravit": kontrola and bool(self.update_cb.IsChecked),
@@ -619,34 +716,39 @@ if not vysledok:
 volba = vysledok["rodina"]
 symbol = symboly[volba]
 rob_nove = vysledok["nove"]
-MIN_DN_MM = vysledok["min_dn"]
 rob_kontrolu = vysledok["kontrola"]
+MIN_DN_MM = vysledok["min_dn"]
+medzera_ft = mm2ft(vysledok["medzera"])
+limit_ft = mm2ft(vysledok["limit"])
+tol_kontroly = mm2ft(TOLERANCIA_KONTROLY_MM)
 
-# odstup podľa kategórie – pre všetky profesie
 odstup_kat = {}
-for key, _, kats in PROFESIE:
+kategorie_skupiny = {}
+for gkey, _, _, kats in SKUPINY:
+    kategorie_skupiny[gkey] = kats
     for k in kats:
-        odstup_kat[int(k)] = mm2ft(vysledok["odstupy"][key])
-# kategórie pre nové otvory – len vybrané profesie
-nove_kat = []
-for key, _, kats in PROFESIE:
-    if key in vysledok["profesie"]:
-        nove_kat.extend(kats)
-nove_bic = set(int(k) for k in nove_kat)
+        odstup_kat[int(k)] = mm2ft(vysledok["odstupy"][gkey])
+
+
+def je_velky(ciel):
+    return limit_ft > 0 and (ciel[0] > limit_ft + 1e-6 or ciel[1] > limit_ft + 1e-6)
+
 
 # =====================================================================
 #  3) EXISTUJÚCE OTVORY, STENY, LINKY
 # =====================================================================
 vsetky_otvory = []
-existujuce_kluce = set()
+vlastnik_identity = {}      # "uid@stena" -> id otvoru
 for inst in DB.FilteredElementCollector(doc).OfClass(DB.FamilyInstance) \
         .OfCategory(BIC.OST_GenericModel):
     if inst.Symbol.Family.Id != symbol.Family.Id:
         continue
     vsetky_otvory.append(inst)
-    existujuce_kluce.update(kluce_otvoru(inst))
+    for k in kluce_otvoru(inst):
+        rozobrany = rozober_kluc(k)
+        if rozobrany:
+            vlastnik_identity[identita(rozobrany[1], rozobrany[2])] = inst.Id.Value
 
-# otvory na kontrolu = hostiteľská stena je v aktívnom view
 otvory_na_kontrolu = []
 if rob_kontrolu:
     for inst in vsetky_otvory:
@@ -654,8 +756,8 @@ if rob_kontrolu:
         if host is not None and host.Id.Value in steny_vo_view \
                 and je_rovna_stena(host):
             otvory_na_kontrolu.append(inst)
+kontrolovane_ids = set(inst.Id.Value for inst in otvory_na_kontrolu)
 
-# steny pre nové otvory
 steny = []
 steny_preskocene = []
 nazvy_typov = []
@@ -669,25 +771,47 @@ if rob_nove:
                 steny_preskocene.append(w)
     nazvy_typov.sort()
 
-linky = [li for li in linky_vo_view if li.Id.Value in vysledok["linky"]]
+linky = [li for li in linky_vo_view
+         if any((gkey, li.Id.Value) in vysledok["pary"] for gkey, _, _, _ in SKUPINY)]
 
-# vyhľadávanie prvkov podľa UniqueId vo všetkých načítaných linkoch
-vsetky_linky = list(DB.FilteredElementCollector(doc).OfClass(DB.RevitLinkInstance))
-nacitane_linky = [li for li in vsetky_linky if li.GetLinkDocument() is not None]
-nenacitany_link = len(nacitane_linky) < len(vsetky_linky)
-UID_CACHE = {}
+# vyhľadávanie prvkov v linkoch
+linky_podla_nazvu = {}
+nenacitane_nazvy = set()
+for li in DB.FilteredElementCollector(doc).OfClass(DB.RevitLinkInstance):
+    nm = nazov_linku(li)
+    if li.GetLinkDocument() is None:
+        nenacitane_nazvy.add(nm)
+    else:
+        linky_podla_nazvu.setdefault(nm, []).append(li)
+nenacitane_nazvy -= set(linky_podla_nazvu.keys())
+PRVOK_CACHE = {}
 
 
-def najdi_v_linkoch(uid):
-    if uid not in UID_CACHE:
-        najdene = None
-        for li in nacitane_linky:
-            e = li.GetLinkDocument().GetElement(uid)
+def najdi_prvok(link, uid):
+    """-> ("ok", li, e) | ("zmazany", None, None) | ("neovereny", None, None)"""
+    kluc = (link, uid)
+    if kluc in PRVOK_CACHE:
+        return PRVOK_CACHE[kluc]
+    vysl = None
+    if link is not None:
+        lis = linky_podla_nazvu.get(link)
+        if not lis:
+            vysl = ("neovereny", None, None)
+        else:
+            e = lis[0].GetLinkDocument().GetElement(uid)
+            vysl = ("ok", lis[0], e) if e is not None else ("zmazany", None, None)
+    else:
+        # starý zápis bez názvu linku
+        for lis in linky_podla_nazvu.values():
+            e = lis[0].GetLinkDocument().GetElement(uid)
             if e is not None:
-                najdene = (li, e)
+                vysl = ("ok", lis[0], e)
                 break
-        UID_CACHE[uid] = najdene
-    return UID_CACHE[uid]
+        if vysl is None:
+            vysl = ("neovereny", None, None) if nenacitane_nazvy \
+                else ("zmazany", None, None)
+    PRVOK_CACHE[kluc] = vysl
+    return vysl
 
 
 # =====================================================================
@@ -725,17 +849,23 @@ if potrebne_steny:
             STENY_SOLIDY[wid] = solidy(w)
 
 # =====================================================================
-#  5) NOVÉ OTVORY – HĽADANIE KOLÍZIÍ
+#  5) POTREBNÉ OBDĹŽNIKY NA KAŽDEJ STENE
 # =====================================================================
-otvory_na_stene = {}     # wall_id -> [u0, u1, z0, z1, [kluce], uhol]
+polozky_steny = {}       # wall_id -> [položka]
 v_stene = []             # [link, id prvku, kategória, stena, uhol]
 chyby_geometrie = []     # [link, id prvku, stena]
 pocet_malych = 0
 pocet_uz_ma_otvor = 0
 
+
+def pridaj_polozku(wid, r, kluce, uhol, vlastnik=None):
+    polozky_steny.setdefault(wid, []).append({
+        "r": list(r), "kluce": list(kluce), "uhol": uhol,
+        "vlastnici": set([vlastnik]) if vlastnik is not None else set()})
+
+
+# 5a) nové prvky z vybraných linkov
 if rob_nove and steny and linky:
-    cat_filter = DB.ElementMulticategoryFilter(
-        List[DB.BuiltInCategory](nove_kat))
     with forms.ProgressBar(
             title=u"Auto-shaft – hľadám kolízie ({value} / {max_value})",
             cancellable=True) as pb:
@@ -744,52 +874,52 @@ if rob_nove and steny and linky:
                 script.exit()
             pb.update_progress(idx + 1, len(steny))
 
+            wid = wall.Id.Value
             wall_bb = wall.get_BoundingBox(None)
-            wall_solidy = STENY_SOLIDY.get(wall.Id.Value)
+            wall_solidy = STENY_SOLIDY.get(wid)
             if wall_bb is None or not wall_solidy:
                 continue
             p0, d, n = ram_steny(wall)
 
             for li in linky:
+                kats = []
+                for gkey, _, _, gk in SKUPINY:
+                    if (gkey, li.Id.Value) in vysledok["pary"]:
+                        kats.extend(gk)
+                if not kats:
+                    continue
+                lname = nazov_linku(li)
                 outline = outline_v_linku(wall_bb, li.GetTotalTransform().Inverse)
                 prvky = DB.FilteredElementCollector(doc, view.Id, li.Id) \
-                    .WherePasses(cat_filter) \
+                    .WherePasses(DB.ElementMulticategoryFilter(
+                        List[DB.BuiltInCategory](kats))) \
                     .WherePasses(DB.BoundingBoxIntersectsFilter(outline))
                 for e in prvky:
                     bic = bic_of(e)
-                    if bic is None or bic not in nove_bic:
+                    if bic is None or bic not in odstup_kat:
                         continue
+                    vlastnik = vlastnik_identity.get(identita(e.UniqueId, wid))
+                    if vlastnik is not None and vlastnik in kontrolovane_ids:
+                        continue    # vyhodnotí sa pri kontrole existujúceho otvoru
                     stav, data = vyhodnot_prvok(e, li, wall_solidy, p0, d, n,
                                                 odstup_kat[bic])
                     if stav == "maly":
                         pocet_malych += 1
                     elif stav == "v_stene":
-                        v_stene.append([li.Name, e.Id.Value, e.Category.Name,
+                        v_stene.append([lname, e.Id.Value, e.Category.Name,
                                         output.linkify(wall.Id), uhol_txt(data)])
                     elif stav == "bez":
                         if data:
-                            chyby_geometrie.append([li.Name, e.Id.Value,
+                            chyby_geometrie.append([lname, e.Id.Value,
                                                     output.linkify(wall.Id)])
+                    elif vlastnik is not None:
+                        pocet_uz_ma_otvor += 1
                     else:
-                        kluc = u"{}@{}".format(e.UniqueId, wall.Id.Value)
-                        if kluc in existujuce_kluce:
-                            pocet_uz_ma_otvor += 1
-                            continue
-                        otvory_na_stene.setdefault(wall.Id.Value, []).append(
-                            data[:4] + [[kluc], data[4]])
+                        pridaj_polozku(wid, data[:4],
+                                       [plny_kluc(lname, e.UniqueId, wid)], data[4])
 
-nove_otvory = []   # (wall, rect)
-for wid, rects in otvory_na_stene.items():
-    wall = doc.GetElement(DB.ElementId(wid))
-    for r in zluc_prekryvy(rects):
-        nove_otvory.append((wall, r))
-
-# =====================================================================
-#  6) KONTROLA EXISTUJÚCICH OTVOROV
-# =====================================================================
-kontrola = []   # dict pre každý skontrolovaný otvor
-tol_kontroly = mm2ft(TOLERANCIA_KONTROLY_MM)
-
+# 5b) prvky existujúcich otvorov
+info_otvorov = {}   # id -> údaje o otvore
 if otvory_na_kontrolu:
     with forms.ProgressBar(
             title=u"Auto-shaft – kontrolujem otvory ({value} / {max_value})",
@@ -803,63 +933,112 @@ if otvory_na_kontrolu:
             wid = wall.Id.Value
             p0, d, n = ram_steny(wall)
             kluce = kluce_otvoru(inst)
-            rects = []
-            ponechane = []
-            zmazane = 0
-            neoverene = False
+            inf = {"inst": inst, "id": inst.Id, "wall": wall, "p0": p0, "d": d,
+                   "akt": skutocny_otvor(inst, p0, d), "kluce": kluce,
+                   "zmazane": 0, "neoverene": 0, "platne": 0}
+            neoverene_kluce = []
             for k in kluce:
-                if u"@" not in k:
+                rozobrany = rozober_kluc(k)
+                if not rozobrany:
                     continue
-                uid = k.rsplit(u"@", 1)[0]
-                najdene = najdi_v_linkoch(uid)
-                if najdene is None:
-                    if nenacitany_link:
-                        neoverene = True
-                        ponechane.append(k)
-                    else:
-                        zmazane += 1
+                inf["platne"] += 1
+                link, uid, _ = rozobrany
+                stav_p, li, e = najdi_prvok(link, uid)
+                if stav_p == "neovereny":
+                    neoverene_kluce.append(k)
                     continue
-                li, e = najdene
+                if stav_p == "zmazany":
+                    inf["zmazane"] += 1
+                    continue
                 bic = bic_of(e)
                 if bic not in odstup_kat:
                     continue
                 stav, data = vyhodnot_prvok(e, li, STENY_SOLIDY[wid], p0, d, n,
                                             odstup_kat[bic])
                 if stav == "otvor":
-                    rects.append(data[:4] + [[k], data[4]])
-                    ponechane.append(k)
+                    pridaj_polozku(wid, data[:4],
+                                   [plny_kluc(nazov_linku(li), uid, wid)],
+                                   data[4], inst.Id.Value)
+            if neoverene_kluce and inf["akt"] is not None:
+                # prvky z nenačítaného linku: zachová sa pôvodný rozmer otvoru
+                pridaj_polozku(wid, rect_z_akt(inf["akt"]), neoverene_kluce,
+                               0.0, inst.Id.Value)
+            inf["neoverene"] = len(neoverene_kluce)
+            info_otvorov[inst.Id.Value] = inf
 
-            zaznam = {"inst": inst, "id": inst.Id, "wall": wall, "p0": p0, "d": d,
-                      "kluce": ponechane,
-                      "akt": skutocny_otvor(inst, p0, d)}
-            if not rects:
-                if neoverene:
-                    zaznam["stav"] = "neoverene"
-                elif kluce and zmazane == len(kluce):
-                    zaznam["stav"] = "zmazany"
-                else:
-                    zaznam["stav"] = "bez_kolizie"
-            else:
-                r = unia(rects)
-                ciel = ciel_otvoru(r)
-                zaznam["ciel"] = ciel
-                zaznam["uhol"] = r[5]
-                akt = zaznam["akt"]
-                zhoda = akt is not None and all(
-                    abs(a - b) <= tol_kontroly for a, b in zip(ciel, akt))
-                if zhoda and set(ponechane) == set(kluce):
-                    zaznam["stav"] = "ok"
-                else:
-                    zaznam["stav"] = "zmeneny"
-            kontrola.append(zaznam)
+# existujúce otvory na stenách pre nové otvory (pri vypnutej kontrole len upozornenie)
+existujuce_na_stene = {}
+if rob_nove and not rob_kontrolu:
+    ids_stien = set(w.Id.Value for w in steny)
+    for inst in vsetky_otvory:
+        host = inst.Host
+        if host is None or host.Id.Value not in ids_stien:
+            continue
+        p0, d, n = ram_steny(host)
+        akt = skutocny_otvor(inst, p0, d)
+        if akt is not None:
+            existujuce_na_stene.setdefault(host.Id.Value, []).append(
+                (inst.Id, rect_z_akt(akt)))
 
-zmenene = [z for z in kontrola if z["stav"] == "zmeneny"]
-bez_kolizie = [z for z in kontrola if z["stav"] in ("bez_kolizie", "zmazany")]
-neoverene_otvory = [z for z in kontrola if z["stav"] == "neoverene"]
-pocet_ok = len([z for z in kontrola if z["stav"] == "ok"])
+# =====================================================================
+#  6) SPOJENIE A POROVNANIE S EXISTUJÚCIMI OTVORMI
+# =====================================================================
+nove_otvory = []        # {"wall", "ciel", "kluce", "uhol"}
+upravy = []             # {"inf", "ciel", "kluce", "uhol", "zlucit": [inf], "len_id"}
+neoverene_otvory = []
+blizko_existujuceho = []   # [stena, id existujúceho otvoru]
+pouzite = set()
+pocet_ok = 0
+
+for wid, polozky in polozky_steny.items():
+    wall = doc.GetElement(DB.ElementId(wid))
+    for c in spoj_polozky(polozky, medzera_ft):
+        ciel = ciel_otvoru(c["r"])
+        if not c["vlastnici"]:
+            nove_otvory.append({"wall": wall, "ciel": ciel, "kluce": c["kluce"],
+                                "uhol": c["uhol"]})
+            ciel_r = [ciel[2] - ciel[0] / 2.0, ciel[2] + ciel[0] / 2.0,
+                      ciel[3], ciel[3] + ciel[1]]
+            for eid, er in existujuce_na_stene.get(wid, []):
+                if su_blizko(ciel_r, er, medzera_ft):
+                    blizko_existujuceho.append([output.linkify(wall.Id),
+                                                output.linkify(eid)])
+            continue
+
+        pouzite.update(c["vlastnici"])
+        poradie = sorted(c["vlastnici"], key=lambda i: -(
+            info_otvorov[i]["akt"][0] * info_otvorov[i]["akt"][1]
+            if info_otvorov[i]["akt"] else 0))
+        inf = info_otvorov[poradie[0]]
+        zlucit = [info_otvorov[i] for i in poradie[1:]]
+        akt = inf["akt"]
+        zhoda = akt is not None and all(
+            abs(a - b) <= tol_kontroly for a, b in zip(ciel, akt))
+        if inf["neoverene"]:
+            neoverene_otvory.append(inf)
+        if not zlucit and zhoda and set(c["kluce"]) == set(inf["kluce"]):
+            pocet_ok += 1
+            continue
+        upravy.append({"inf": inf, "ciel": ciel, "kluce": c["kluce"],
+                       "uhol": c["uhol"], "zlucit": zlucit,
+                       "len_id": zhoda and not zlucit})
+
+bez_kolizie = []
+for oid, inf in info_otvorov.items():
+    if oid in pouzite:
+        continue
+    inf["stav"] = "zmazany" if inf["platne"] and inf["zmazane"] == inf["platne"] \
+        else "bez_kolizie"
+    bez_kolizie.append(inf)
+
+upravy_rozmer = [u for u in upravy if not u["len_id"]]
+upravy_id = [u for u in upravy if u["len_id"]]
+pocet_zlucenych = sum(len(u["zlucit"]) for u in upravy)
+velke_nove = [o for o in nove_otvory if je_velky(o["ciel"])]
+velke_upravy = [u for u in upravy_rozmer if je_velky(u["ciel"])]
 
 akcia_nove = nove_otvory if rob_nove else []
-akcia_upravit = zmenene if vysledok["upravit"] else []
+akcia_upravit = upravy if vysledok["upravit"] else []
 akcia_zmazat = bez_kolizie if vysledok["zmazat"] else []
 
 # =====================================================================
@@ -871,20 +1050,35 @@ if akcia_nove or akcia_upravit or akcia_zmazat:
     if rob_nove:
         riadky.append(u"Nové otvory: {}".format(len(nove_otvory)))
     if rob_kontrolu:
-        riadky.append(u"Existujúce otvory skontrolované: {}".format(len(kontrola)))
-        riadky.append(u"   – v poriadku: {}".format(pocet_ok))
+        riadky.append(u"Existujúce otvory skontrolované: {} (v poriadku: {})".format(
+            len(info_otvorov), pocet_ok))
+        vypnute = u"" if vysledok["upravit"] else u" (úprava vypnutá)"
         riadky.append(u"   – posunuté alebo zmenený rozmer: {}{}".format(
-            len(zmenene), u"" if vysledok["upravit"] else u" (úprava vypnutá)"))
+            len(upravy_rozmer), vypnute))
+        if pocet_zlucenych:
+            riadky.append(u"   – spojenie: {} otvorov sa zlúči do susedných{}".format(
+                pocet_zlucenych, vypnute))
+        if upravy_id:
+            riadky.append(u"   – doplnenie údajov v {}: {}{}".format(
+                PARAM_LINKID, len(upravy_id), vypnute))
         riadky.append(u"   – bez kolízie alebo prvok zmazaný: {}{}".format(
             len(bez_kolizie), u"" if vysledok["zmazat"] else u" (mazanie vypnuté)"))
         if neoverene_otvory:
             riadky.append(u"   – neoverené (link nie je načítaný): {}".format(
                 len(neoverene_otvory)))
+    if velke_nove or velke_upravy:
+        riadky.append(u"Otvory väčšie ako {:g} mm (posúdi statik): {}".format(
+            vysledok["limit"], len(velke_nove) + len(velke_upravy)))
+    if blizko_existujuceho:
+        riadky.append(u"Nové otvory blízko existujúcich (zapni kontrolu na spojenie): {}"
+                      .format(len(blizko_existujuceho)))
     if v_stene:
         riadky.append(u"Prvky vedené v stene (riešiť ručne): {}".format(len(v_stene)))
     riadky.append(u"")
-    riadky.append(u"Vykonať: {} nových, {} upraviť, {} zmazať?".format(
-        len(akcia_nove), len(akcia_upravit), len(akcia_zmazat)))
+    riadky.append(u"Vykonať: {} nových, {} upraviť, {} zmazať{}?".format(
+        len(akcia_nove), len(akcia_upravit),
+        len(akcia_zmazat) + (pocet_zlucenych if akcia_upravit else 0),
+        u" (vrátane spojených)" if akcia_upravit and pocet_zlucenych else u""))
     odpoved = forms.alert(u"\n".join(riadky), title=u"Auto-shaft – súhrn",
                           options=[u"Vykonať", u"Len report", u"Zrušiť"],
                           warn_icon=False)
@@ -895,7 +1089,7 @@ if akcia_nove or akcia_upravit or akcia_zmazat:
 # =====================================================================
 #  8) VYKONANIE
 # =====================================================================
-osadene_ids = {}      # index v akcia_nove -> ElementId
+osadene_ids = {}      # index v nove_otvory -> ElementId
 zmazane_ids = set()
 if vykonat:
     t = DB.Transaction(doc, u"Auto-shaft")
@@ -906,27 +1100,30 @@ if vykonat:
             doc.Regenerate()
 
         na_posun = []   # (inst, cieľový stred pozdĺž steny, p0, d)
+        na_zmazanie = []
 
-        for i, (wall, r) in enumerate(akcia_nove):
-            sirka, vyska, u_stred, z_spodok = ciel_otvoru(r)
+        for i, o in enumerate(akcia_nove):
+            sirka, vyska, u_stred, z_spodok = o["ciel"]
+            wall = o["wall"]
             p0, d, n = ram_steny(wall)
             level = doc.GetElement(wall.LevelId)
             bod = p0 + d.Multiply(u_stred)
             inst = doc.Create.NewFamilyInstance(
                 DB.XYZ(bod.X, bod.Y, z_spodok), symbol, wall, level,
                 DB.Structure.StructuralType.NonStructural)
-            nastav_otvor(inst, sirka, vyska, z_spodok, level, r[4])
+            nastav_otvor(inst, sirka, vyska, z_spodok, level, o["kluce"])
             na_posun.append((inst, u_stred, p0, d))
             osadene_ids[i] = inst.Id
 
-        for z in akcia_upravit:
-            inst = z["inst"]
-            sirka, vyska, u_stred, z_spodok = z["ciel"]
+        for u in akcia_upravit:
+            inf = u["inf"]
+            inst = inf["inst"]
+            sirka, vyska, u_stred, z_spodok = u["ciel"]
             nastav_otvor(inst, sirka, vyska, z_spodok,
-                         doc.GetElement(inst.LevelId), z["kluce"])
-            na_posun.append((inst, u_stred, z["p0"], z["d"]))
+                         doc.GetElement(inst.LevelId), u["kluce"])
+            na_posun.append((inst, u_stred, inf["p0"], inf["d"]))
+            na_zmazanie.extend(z["id"] for z in u["zlucit"])
 
-        # poloha pozdĺž steny
         doc.Regenerate()
         tol = mm2ft(0.5)
         for inst, u_ciel, p0, d in na_posun:
@@ -934,10 +1131,10 @@ if vykonat:
             if abs(posun) > tol:
                 DB.ElementTransformUtils.MoveElement(doc, inst.Id, d.Multiply(posun))
 
-        if akcia_zmazat:
-            ids = [z["id"] for z in akcia_zmazat]
-            doc.Delete(List[DB.ElementId](ids))
-            zmazane_ids = set(i.Value for i in ids)
+        na_zmazanie.extend(inf["id"] for inf in akcia_zmazat)
+        if na_zmazanie:
+            doc.Delete(List[DB.ElementId](na_zmazanie))
+            zmazane_ids = set(i.Value for i in na_zmazanie)
 
         t.Commit()
     except SystemExit:
@@ -955,56 +1152,80 @@ if vykonat:
 # =====================================================================
 #  9) REPORT
 # =====================================================================
+def odkaz(eid):
+    return str(eid.Value) if eid.Value in zmazane_ids else output.linkify(eid)
+
+
+def statika_txt(ciel):
+    return u"⚠ posúdiť" if je_velky(ciel) else u"–"
+
+
+def rozmer_txt(sirka, vyska):
+    return u"{} × {}".format(mm_txt(sirka), mm_txt(vyska))
+
+
 output.print_md(u"## Auto-shaft – výsledok")
 if not vykonat:
     output.print_md(u"**Len report – model nebol zmenený.**")
 output.print_md(u"View: **{}** | Rodina: **{}** | Linky: **{}**".format(
-    view.Name, volba, u", ".join(l.Name for l in linky) or u"–"))
+    view.Name, volba, u", ".join(nazov_linku(l) for l in linky) or u"–"))
+output.print_md(u"Odsadenie: {} | Spájanie pri medzere pod {:g} mm | "
+                u"Limit pre statika {:g} mm | Limit DN {:g}".format(
+                    u", ".join(u"{} {:g} mm".format(nazov, vysledok["odstupy"][gkey])
+                               for gkey, nazov, _, _ in SKUPINY),
+                    vysledok["medzera"], vysledok["limit"], MIN_DN_MM))
 if rob_nove:
-    output.print_md(u"Typy stien: {}".format(u", ".join(nazvy_typov)))
+    output.print_md(u"Typy konštrukcií: {}".format(u", ".join(nazvy_typov)))
 if not presna_geometria:
     output.print_md(u"**Pozor:** geometriu stien sa nepodarilo načítať bez "
                     u"existujúcich otvorov (napr. otvory obsadené iným "
-                    u"používateľom). Kontrola môže byť nepresná.")
+                    u"používateľom). Výsledok môže byť nepresný.")
 
 if rob_nove:
     output.print_md(u"### Nové otvory")
     output.print_md(u"- {}: **{}**".format(
         u"Osadené" if vykonat else u"Navrhnuté", len(nove_otvory)))
+    output.print_md(u"- Z toho na posúdenie statikom: **{}**".format(len(velke_nove)))
     output.print_md(u"- Z toho šikmé prechody (skontrolovať): **{}**".format(
-        len([1 for _, r in nove_otvory if r[5] > TOLERANCIA_UHLA_DEG])))
-    output.print_md(u"- Preskočené – prvok už má otvor: **{}**".format(
-        pocet_uz_ma_otvor))
+        len([1 for o in nove_otvory if o["uhol"] > TOLERANCIA_UHLA_DEG])))
+    if pocet_uz_ma_otvor:
+        output.print_md(u"- Preskočené – prvok už má otvor: **{}**".format(
+            pocet_uz_ma_otvor))
     if MIN_DN_MM > 0:
         output.print_md(u"- Preskočené – menšie ako DN{:g}: **{}**".format(
             MIN_DN_MM, pocet_malych))
-    output.print_md(u"- Preskočené – prvky vedené v stene: **{}**".format(
-        len(v_stene)))
-    output.print_md(u"- Zlyhaný výpočet geometrie: **{}**".format(
-        len(chyby_geometrie)))
+    output.print_md(u"- Preskočené – prvky vedené v stene: **{}**".format(len(v_stene)))
+    output.print_md(u"- Zlyhaný výpočet geometrie: **{}**".format(len(chyby_geometrie)))
     if nove_otvory:
         riadky = []
-        for i, (wall, r) in enumerate(nove_otvory):
-            sirka, vyska, _, _ = ciel_otvoru(r)
-            otvor = output.linkify(osadene_ids[i]) if i in osadene_ids else u"–"
-            riadky.append([otvor, output.linkify(wall.Id), mm_txt(sirka),
-                           mm_txt(vyska), len(r[4]), uhol_txt(r[5])])
-        output.print_table(riadky, columns=[u"Otvor", u"Stena", u"Šírka [mm]",
-                                            u"Výška [mm]", u"Počet prvkov",
-                                            u"Šikmý prechod"])
+        for i, o in enumerate(nove_otvory):
+            riadky.append([output.linkify(osadene_ids[i]) if i in osadene_ids else u"–",
+                           output.linkify(o["wall"].Id),
+                           rozmer_txt(o["ciel"][0], o["ciel"][1]),
+                           len(o["kluce"]), uhol_txt(o["uhol"]),
+                           statika_txt(o["ciel"])])
+        output.print_table(riadky, columns=[u"Otvor", u"Stena", u"Š × V [mm]",
+                                            u"Počet prvkov", u"Šikmý prechod",
+                                            u"Statika"])
+    if blizko_existujuceho:
+        output.print_md(u"#### Nové otvory blízko existujúcich – zapni kontrolu na spojenie")
+        output.print_table(blizko_existujuceho, columns=[u"Stena", u"Existujúci otvor"])
 
 if rob_kontrolu:
     output.print_md(u"### Kontrola existujúcich otvorov")
     output.print_md(u"- Skontrolované: **{}** (v poriadku: **{}**)".format(
-        len(kontrola), pocet_ok))
-    output.print_md(u"- Posunuté alebo zmenený rozmer: **{}**".format(len(zmenene)))
-    output.print_md(u"- Bez kolízie alebo prvok zmazaný: **{}**".format(
-        len(bez_kolizie)))
+        len(info_otvorov), pocet_ok))
+    output.print_md(u"- Posunuté alebo zmenený rozmer: **{}**".format(len(upravy_rozmer)))
+    output.print_md(u"- Otvory na spojenie so susedným: **{}**".format(pocet_zlucenych))
+    output.print_md(u"- Bez kolízie alebo prvok zmazaný: **{}**".format(len(bez_kolizie)))
+    if upravy_id:
+        output.print_md(u"- Doplnenie údajov v {}: **{}**".format(
+            PARAM_LINKID, len(upravy_id)))
     if neoverene_otvory:
-        output.print_md(u"- Neoverené (niektorý link nie je načítaný): **{}**".format(
+        output.print_md(u"- Neoverené (link nie je načítaný): **{}**".format(
             len(neoverene_otvory)))
 
-    if zmenene:
+    if upravy_rozmer:
         if not vykonat:
             akcia = u"len report"
         elif vysledok["upravit"]:
@@ -1012,24 +1233,23 @@ if rob_kontrolu:
         else:
             akcia = u"neupravený (vypnuté)"
         riadky = []
-        for z in zmenene:
-            akt = z["akt"]
-            ciel = z["ciel"]
+        for u in upravy_rozmer:
+            akt = u["inf"]["akt"]
+            ciel = u["ciel"]
             if akt is not None:
-                povodne = u"{} × {}".format(mm_txt(akt[0]), mm_txt(akt[1]))
-                posun = max(abs(mm_txt(ciel[2] - akt[2])),
-                            abs(mm_txt(ciel[3] - akt[3])))
+                povodne = rozmer_txt(akt[0], akt[1])
+                posun = max(abs(mm_txt(ciel[2] - akt[2])), abs(mm_txt(ciel[3] - akt[3])))
             else:
-                povodne = u"?"
-                posun = u"?"
-            riadky.append([output.linkify(z["inst"].Id), output.linkify(z["wall"].Id),
-                           povodne,
-                           u"{} × {}".format(mm_txt(ciel[0]), mm_txt(ciel[1])),
-                           posun, uhol_txt(z["uhol"]), akcia])
-        output.print_md(u"#### Posunuté alebo zmenený rozmer")
+                povodne = posun = u"?"
+            spojene = u", ".join(odkaz(z["id"]) for z in u["zlucit"]) or u"–"
+            riadky.append([odkaz(u["inf"]["id"]), output.linkify(u["inf"]["wall"].Id),
+                           povodne, rozmer_txt(ciel[0], ciel[1]), posun, spojene,
+                           uhol_txt(u["uhol"]), statika_txt(ciel), akcia])
+        output.print_md(u"#### Posunuté, zmenené a spájané otvory")
         output.print_table(riadky, columns=[u"Otvor", u"Stena", u"Pôvodne Š × V",
                                             u"Nové Š × V", u"Posun [mm]",
-                                            u"Šikmý prechod", u"Akcia"])
+                                            u"Spojené otvory (zmažú sa)",
+                                            u"Šikmý prechod", u"Statika", u"Akcia"])
 
     if bez_kolizie:
         if not vykonat:
@@ -1039,21 +1259,18 @@ if rob_kontrolu:
         else:
             akcia = u"ponechaný (vypnuté)"
         riadky = []
-        for z in bez_kolizie:
-            iid = z["id"]
-            otvor = str(iid.Value) if iid.Value in zmazane_ids \
-                else output.linkify(iid)
-            stav = u"prvok zmazaný v linku" if z["stav"] == "zmazany" \
+        for inf in bez_kolizie:
+            stav = u"prvok zmazaný v linku" if inf["stav"] == "zmazany" \
                 else u"prvok už stenou neprechádza"
-            riadky.append([otvor, output.linkify(z["wall"].Id), stav, akcia])
+            riadky.append([odkaz(inf["id"]), output.linkify(inf["wall"].Id), stav, akcia])
         output.print_md(u"#### Bez kolízie alebo prvok zmazaný")
         output.print_table(riadky, columns=[u"Otvor", u"Stena", u"Stav", u"Akcia"])
 
     if neoverene_otvory:
-        output.print_md(u"#### Neoverené – načítaj všetky linky a spusti znova")
-        output.print_table([[output.linkify(z["inst"].Id), output.linkify(z["wall"].Id)]
-                            for z in neoverene_otvory],
-                           columns=[u"Otvor", u"Stena"])
+        output.print_md(u"#### Neoverené – prvky z nenačítaného linku, rozmer sa zachoval")
+        output.print_table([[odkaz(inf["id"]), output.linkify(inf["wall"].Id),
+                             inf["neoverene"]] for inf in neoverene_otvory],
+                           columns=[u"Otvor", u"Stena", u"Počet neoverených prvkov"])
 
 if v_stene:
     output.print_md(u"### Prvky vedené v stene – riešiť ručne")
