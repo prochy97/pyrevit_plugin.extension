@@ -11,6 +11,7 @@ Custom **pyRevit** extension with automation tools for Autodesk Revit. Tools app
 | Architecture | **AutoJoin** | Automatic Join Geometry in the active view with structural priority |
 | Architecture | **Auto-shaft** | Automatic rectangular openings in selected wall types at clashes with linked MEP models, merging of nearby openings, check and update of existing ones |
 | YIT | **TALO kódy** | Naming of element types and parameters per YIT EIR (TALO 2000 codes) |
+| Informácie | **Návod** | User guide for all tools, one tab per tool (in Slovak) |
 
 ---
 
@@ -56,9 +57,9 @@ Status: **v3, in testing**.
 2. Run **Auto-shaft**. One window opens with all settings:
    1. **Opening family** (default `DGSK_otvor_stena`).
    2. **Wall types** – types in the active view that get openings. Types matching the name filter (default `RCO`) are pre-selected. More terms are separated by `;`.
-   3. **MEP links** – a tree by Revit category (Pipes, Ducts, Cable Trays, Conduits). Expanding a category shows the links that contain it in the active view, with element counts. Each link can be switched on or off per category (e.g. Pipes from the sprinkler model off).
-   4. **Clearance** – uniform, or per category. Minimum DN for Pipes and Conduits.
-   5. **Merging and large openings** – openings closer than the set distance are merged (default 100 mm); openings larger than the limit (default 500 mm width or height) are marked for structural review.
+   3. **MEP links** – a tree by Revit category (Pipes, Ducts, Cable Trays, Conduits), each including its fittings (elbows, tees) and insulation. Expanding a category shows only the links that contain it in the active view. Each link can be switched on or off per category (e.g. Pipes from the sprinkler model off).
+   4. **Clearance** – uniform, or per category. Pipes and conduits smaller than the set DN are skipped.
+   5. **Additional settings** – openings that leave less wall between them than the set distance are merged (default 100 mm); openings larger than the set size (default 500 mm width or height) are marked for structural review. Both values can be changed.
    6. **Action** – place new openings, check existing openings, update moved/changed/merged ones, delete openings without a clash.
 3. Click **Start**. Everything is computed first, nothing is written yet.
 4. A summary appears (new / to update / to delete). Choose **Execute**, **Report only** (model is not changed) or **Cancel**.
@@ -80,8 +81,8 @@ The whole operation is undone with a single **Ctrl+Z**.
 * Clashes are computed from the **actual geometry intersection**, so fittings and insulation are included. Insulation merges with its pipe or duct into one opening.
 * The clearance is measured from the **outer surface of the element including insulation**, not from the pipe axis. Opening size = outer size of the element in the wall + 2 × clearance, **rounded up to 10 mm**.
 * Openings that overlap or leave **less wall between them than the set distance** are merged into one. New and existing openings on the same wall are merged together (existing ones only with the check enabled): one existing opening is enlarged, the others are deleted.
-* Openings larger than the **structural limit** are placed normally but marked in the summary and report.
-* Pipes and conduits **smaller than the set DN** are ignored (default DN20, set in the window, 0 = no limit). The limit uses the nominal pipe size; insulation does not count, but the opening size includes it.
+* Openings larger than the **set size** (width or height) are placed normally but marked *⚠ check* in the summary and report for structural review.
+* Pipes and conduits **smaller than the set DN** are ignored (default DN20, set in the window, 0 = no limit). The limit uses the nominal size without insulation; the opening size includes insulation.
 * **Skewed crossings** get a larger opening that covers the whole elongated pass-through. Crossings more than 5° off perpendicular are marked in the report for checking.
 * Elements **running inside the wall** (more than 75° off perpendicular) are not placed. They are listed in the report for manual solution.
 * **Re-running** does not create duplicates: elements that already have an opening are skipped (and handled by the check instead).
@@ -93,6 +94,11 @@ The whole operation is undone with a single **Ctrl+Z**.
 * `ID_otvor` also stores the link file name, so an element missing from a loaded link is reported as deleted, while elements from an **unloaded link** are marked **not verified**: the opening keeps its size and is never deleted. Openings created by older versions get the link name added on the next update.
 * If the MEP designer deletes and redraws an element, it gets a new UniqueId: the old opening is reported as *element deleted* and a new opening is proposed.
 * Wall geometry is computed without our openings (they are temporarily removed in a rolled-back transaction), so an element passing through an existing opening is still detected.
+* An opening is never deleted when it cannot be verified: unloaded link, wall geometry not available, or a failed geometry calculation.
+* **Manually placed openings** (selected family, empty `ID_otvor`) are adopted automatically when new openings and the check are both enabled: the tool writes the elements passing through them into `ID_otvor` together with a `RUCNY:` mark holding the manual size and position. From then on the manual size is a minimum: the opening can only grow (an element needs more space or a neighbour is merged into it), it is never made smaller, moved or deleted. If its elements disappear, it is kept and listed in the report.
+* Manual openings with no element passing through (e.g. a reserve) stay without ID and are never changed.
+* In a workshared model, openings and walls **owned by another user** are skipped and listed in the report.
+* Revit warnings during writing do not interrupt the run; they are listed at the end of the report.
 
 ### Opening family requirements
 * Generic Model, **wall based**.
@@ -103,7 +109,7 @@ The whole operation is undone with a single **Ctrl+Z**.
 
 ### Limitations
 * Rectangular openings only.
-* Openings that were merged from several elements are checked as one: if the elements move apart, the opening is enlarged to cover all of them, not split.
+* If elements of one merged opening move apart by more than the set distance, the existing opening stays with the largest group and the other groups get new openings.
 * Openings cannot be placed into walls in linked models.
 * Requires **Revit 2024 or newer**.
 
@@ -129,6 +135,10 @@ Parameter and column names are in `lib/yit_talo/config.py`.
 
 ### Not in v1
 Automatic code suggestions, renaming families, cross-model numbering check for blocks A/B/C (v1 only exports used codes to CSV).
+
+## Návod (user guide)
+
+The **Návod** button opens a window with a tab for each tool. The text of each tab is a Markdown file in `DELTA_SK.tab/Informácie.panel/Návod.pushbutton/obsah/` (one file = one tab, ordered by file name). To update the guide, edit these files; for a new tool, add a new file. Supported formatting: `#` tab title, `##` / `###` headings, `-` bullets, `1.` numbered steps, `**bold**` and `` `code` ``.
 
 ---
 
@@ -157,6 +167,7 @@ Vlastné rozšírenie pre **pyRevit** s automatizačnými nástrojmi pre Autodes
 | Architecture | **AutoJoin** | Automatické Join Geometry v aktívnom pohľade s prioritou konštrukcií |
 | Architecture | **Auto-shaft** | Automatické obdĺžnikové otvory vo vybraných typoch stien v miestach kolízií s linkami profesií, spájanie blízkych otvorov, kontrola a aktualizácia existujúcich |
 | YIT | **TALO kódy** | Pomenovanie typov a vyplnenie parametrov podľa EIR YIT (kódy TALO 2000) |
+| Informácie | **Návod** | Návod na používanie všetkých nástrojov, každý nástroj vo vlastnej záložke |
 
 ---
 
@@ -202,9 +213,9 @@ Stav: **v3, testovanie**.
 2. Spusti **Auto-shaft**. Otvorí sa jedno okno so všetkými nastaveniami:
    1. **Rodina otvoru** (predvolene `DGSK_otvor_stena`).
    2. **Výber konštrukcií** – typy z aktívneho view, do ktorých sa vytvorí otvor. Typy podľa filtra názvu (predvolene `RCO`) sú predoznačené. Viac výrazov sa oddeľuje `;`.
-   3. **Linky profesií** – strom podľa kategórií Revitu (Pipes, Ducts, Cable Trays, Conduits). Po rozbalení vidno linky, v ktorých sa kategória v aktívnom view nachádza, aj s počtom prvkov. Každý link sa dá pre danú kategóriu zapnúť alebo vypnúť (napr. Pipes zo SHZ vypnúť).
-   4. **Odsadenie otvoru** – jednotné, alebo podľa kategórie. Limit DN pre Pipes a Conduits.
-   5. **Spájanie a veľké otvory** – otvory bližšie ako nastavená medzera sa spoja (predvolene 100 mm); otvory väčšie ako limit (predvolene 500 mm na šírku alebo výšku) sa označia na posúdenie statikom.
+   3. **Linky profesií** – strom podľa kategórií Revitu (Pipes, Ducts, Cable Trays, Conduits), každá vrátane kolien, odbočiek a izolácie. Po rozbalení sa zobrazia len linky, ktoré majú danú kategóriu viditeľnú v aktívnom view. Každý link sa dá pre danú kategóriu zapnúť alebo vypnúť (napr. Pipes zo SHZ vypnúť).
+   4. **Odsadenie otvoru** – jednotné, alebo podľa kategórie. Potrubia a chráničky menšie ako nastavené DN sa neosádzajú.
+   5. **Dodatočné informácie** – otvory, medzi ktorými ostane menej steny ako nastavená medzera, sa spoja (predvolene 100 mm); otvory väčšie ako nastavený rozmer (predvolene 500 mm na šírku alebo výšku) sa označia na posúdenie statikom. Obe hodnoty sa dajú zmeniť.
    6. **Typ akcie** – osadiť nové otvory, skontrolovať existujúce, upraviť posunuté/zmenené/spájané, zmazať otvory bez kolízie.
 3. Klikni na **Štart**. Všetko sa najprv len vypočíta, do modelu sa nič nezapíše.
 4. Zobrazí sa súhrn (nové / na úpravu / na zmazanie). Vyber **Vykonať**, **Len report** (model sa nezmení) alebo **Zrušiť**.
@@ -226,8 +237,8 @@ Celú operáciu vrátiš jedným **Ctrl+Z**.
 * Kolízie sa počítajú zo **skutočného prieniku geometrie**, takže sa zarátajú aj tvarovky a izolácia. Izolácia sa zlúči s potrubím do jedného otvoru.
 * Odsadenie sa meria od **vonkajšieho povrchu prvku vrátane izolácie**, nie od osi potrubia. Rozmer otvoru = vonkajší rozmer prvku v stene + 2 × odsadenie, **zaokrúhlené nahor na 10 mm**.
 * Otvory, ktoré sa prekrývajú alebo medzi nimi ostane **menej steny ako nastavená medzera**, sa spoja do jedného. Spájajú sa nové aj existujúce otvory na tej istej stene (existujúce len pri zapnutej kontrole): jeden existujúci sa zväčší, ostatné sa zmažú.
-* Otvory väčšie ako **limit pre statika** sa osadia normálne, ale v súhrne a reporte sú označené.
-* Potrubia a chráničky **menšie ako nastavené DN** sa ignorujú (predvolene DN20, nastavuje sa v okne, 0 = bez obmedzenia). Rozhoduje svetlosť potrubia, izolácia sa nezapočítava, ale rozmer otvoru ju zahŕňa.
+* Otvory väčšie ako **nastavený rozmer** (šírka alebo výška) sa osadia normálne, ale v súhrne a reporte sú označené *⚠ posúdiť* na kontrolu statikom.
+* Potrubia a chráničky **menšie ako nastavené DN** sa neosádzajú (predvolene DN20, nastavuje sa v okne, 0 = bez obmedzenia). Rozhoduje svetlosť potrubia bez izolácie, rozmer otvoru izoláciu zahŕňa.
 * **Šikmé prechody** dostanú väčší otvor, ktorý pokryje celý pretiahnutý prienik. Prechody s odklonom od kolmice nad 5° sú v reporte označené na kontrolu.
 * Prvky **vedené v stene** (odklon od kolmice nad 75°) sa neosádzajú. Vypíšu sa v reporte na ručné riešenie.
 * **Opakované spustenie** nevytvára duplicity: prvky, ktoré už majú otvor, sa preskočia (rieši ich kontrola existujúcich).
@@ -239,6 +250,11 @@ Celú operáciu vrátiš jedným **Ctrl+Z**.
 * `ID_otvor` obsahuje aj názov súboru linku. Prvok, ktorý chýba v načítanom linku, je *zmazaný*; prvky z **nenačítaného linku** sú **neoverené**: otvor si zachová rozmer a nikdy sa nezmaže. Otvory zo starších verzií dostanú názov linku pri najbližšej úprave.
 * Ak projektant TZB prvok zmaže a nakreslí nanovo, dostane nové UniqueId: starý otvor sa vyhodnotí ako *prvok zmazaný* a navrhne sa nový otvor.
 * Geometria stien sa počíta bez našich otvorov (dočasne sa odstránia v transakcii, ktorá sa vráti), takže sa správne vyhodnotí aj prvok, ktorý prechádza existujúcim otvorom.
+* Otvor sa nikdy nezmaže, ak sa nedá overiť: nenačítaný link, nedostupná geometria steny alebo zlyhaný výpočet prieniku.
+* **Ručne osadené otvory** (vybraná rodina, prázdne `ID_otvor`) sa automaticky prevezmú, keď je zapnuté osadenie nových aj kontrola: plugin do `ID_otvor` zapíše prvky, ktoré nimi prechádzajú, a značku `RUCNY:` s ručným rozmerom a polohou. Odvtedy je ručný rozmer minimum: otvor sa môže len zväčšiť (prvok potrebuje viac miesta alebo sa k nemu pripojí susedný), nikdy sa nezmenší, neposunie ani nezmaže. Ak z neho prvky zmiznú, ostane a vypíše sa v reporte.
+* Ručné otvory, ktorými neprechádza žiadny prvok (napr. rezerva), ostanú bez ID a nikdy sa nemenia.
+* V zdieľanom modeli sa otvory a steny **obsadené iným používateľom** vynechajú a vypíšu v reporte.
+* Varovania Revitu počas zápisu neprerušia beh, vypíšu sa na konci reportu.
 
 ### Požiadavky na rodinu otvoru
 * Generic Model, **wall based**.
@@ -249,7 +265,7 @@ Celú operáciu vrátiš jedným **Ctrl+Z**.
 
 ### Obmedzenia
 * Len obdĺžnikové otvory.
-* Zlúčený otvor z viacerých prvkov sa kontroluje ako celok: ak sa prvky od seba vzdialia, otvor sa zväčší, aby pokryl všetky, nerozdelí sa.
+* Ak sa prvky spojeného otvoru od seba vzdialia viac ako o nastavenú medzeru, existujúci otvor ostane najväčšej skupine a ostatné skupiny dostanú nové otvory.
 * Do stien v nalinkovaných modeloch sa otvory osadiť nedajú.
 * Vyžaduje **Revit 2024 alebo novší**.
 
@@ -275,6 +291,10 @@ Mená parametrov a stĺpcov sú v `lib/yit_talo/config.py`.
 
 ### Mimo v1
 Automatické návrhy kódov, premenovanie rodín, medzimodelová kontrola číslovania blokov A/B/C (v1 vie len export použitých kódov do CSV).
+
+## Návod
+
+Tlačidlo **Návod** otvorí okno so záložkou pre každý nástroj. Text záložiek je v Markdown súboroch v priečinku `DELTA_SK.tab/Informácie.panel/Návod.pushbutton/obsah/` (jeden súbor = jedna záložka, poradie podľa názvu súboru). Návod sa upravuje v týchto súboroch; pre nový nástroj stačí pridať nový súbor. Podporované formátovanie: `#` názov záložky, `##` / `###` nadpisy, `-` odrážky, `1.` číslované kroky, `**tučné**` a `` `kód` ``.
 
 ---
 
