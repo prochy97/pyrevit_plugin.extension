@@ -73,7 +73,7 @@
                 <GroupBox Grid.Row="2" Header="3. Linky profesií">
                     <DockPanel>
                         <TextBlock DockPanel.Dock="Bottom" Style="{StaticResource Poznamka}"
-                                   Text="Rozbaľ kategóriu a vyber linky, z ktorých sa majú robiť otvory. Počty sú prvky viditeľné v aktívnom view vrátane tvaroviek a izolácie."/>
+                                   Text="Rozbaľ kategóriu a vyber linky, z ktorých sa majú robiť otvory. Počet pri kategórii = prvky viditeľné v aktívnom view vrátane kolien, odbočiek a izolácie."/>
                         <Border BorderBrush="#FFBBBBBB" BorderThickness="1">
                             <TreeView x:Name="tree" BorderThickness="0" Padding="2"/>
                         </Border>
@@ -114,24 +114,24 @@
                         </Grid>
                         <DockPanel Margin="0,10,0,0">
                             <TextBox x:Name="mindn_tb" Width="70" DockPanel.Dock="Right"/>
-                            <TextBlock Text="Neosádzať pre Pipes a Conduits menšie ako DN"
+                            <TextBlock Text="Neosádzať pre potrubia menšie ako DN"
                                        VerticalAlignment="Center" TextWrapping="Wrap"/>
                         </DockPanel>
                         <TextBlock Style="{StaticResource Poznamka}"
-                                   Text="Odsadenie sa meria od vonkajšieho povrchu prvku vrátane izolácie, nie od osi potrubia. Rozmer otvoru = vonkajší rozmer prvku v stene + 2 × odsadenie, zaokrúhlené nahor na 10 mm. Pri šikmom prechode sa berie celý pretiahnutý prienik so stenou. Limit DN sa posudzuje podľa svetlosti potrubia bez izolácie."/>
+                                   Text="Odsadenie sa meria od vonkajšieho povrchu prvku vrátane izolácie. Rozmer otvoru zaokrúhlený nahor na 10 mm. Pri šikmom prechode sa berie celý pretiahnutý prienik so stenou. Limit DN sa posudzuje podľa svetlosti potrubia bez izolácie."/>
                     </StackPanel>
                 </GroupBox>
 
-                <GroupBox Header="5. Spájanie a veľké otvory [mm]">
+                <GroupBox Header="5. Dodatočné informácie">
                     <StackPanel>
                         <DockPanel Margin="0,2">
                             <TextBox x:Name="gap_tb" Width="70" DockPanel.Dock="Right"/>
-                            <TextBlock Text="Spojiť otvory, ak medzi nimi ostane menej steny ako"
+                            <TextBlock Text="Spojiť otvory, ak medzi nimi ostane menej steny ako [mm]"
                                        VerticalAlignment="Center" TextWrapping="Wrap"/>
                         </DockPanel>
                         <DockPanel Margin="0,2">
                             <TextBox x:Name="limit_tb" Width="70" DockPanel.Dock="Right"/>
-                            <TextBlock Text="Označiť na posúdenie statikom otvory väčšie ako (šírka alebo výška)"
+                            <TextBlock Text="Označiť otvory väčšie ako (šírka, výška) [mm]"
                                        VerticalAlignment="Center" TextWrapping="Wrap"/>
                         </DockPanel>
                         <TextBlock Style="{StaticResource Poznamka}"

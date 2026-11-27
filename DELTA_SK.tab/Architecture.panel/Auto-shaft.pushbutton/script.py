@@ -52,13 +52,13 @@ PREDVOLENY_LIMIT_STATIKA = u"500"
 
 # kľúč (= začiatok názvu poľa odsadenia v ui.xaml), názov, popis, kategórie
 SKUPINY = [
-    ("pipes", u"Pipes", u"potrubia, tvarovky, izolácia",
+    ("pipes", u"Pipes", u"potrubia vrátane kolien, odbočiek a izolácie",
      [BIC.OST_PipeCurves, BIC.OST_PipeFitting, BIC.OST_PipeInsulations]),
-    ("ducts", u"Ducts", u"VZT potrubia, tvarovky, izolácia",
+    ("ducts", u"Ducts", u"VZT potrubia vrátane kolien, odbočiek a izolácie",
      [BIC.OST_DuctCurves, BIC.OST_DuctFitting, BIC.OST_DuctInsulations]),
-    ("trays", u"Cable Trays", u"káblové žľaby, tvarovky",
+    ("trays", u"Cable Trays", u"káblové žľaby vrátane kolien a odbočiek",
      [BIC.OST_CableTray, BIC.OST_CableTrayFitting]),
-    ("conduits", u"Conduits", u"chráničky, tvarovky",
+    ("conduits", u"Conduits", u"chráničky vrátane kolien",
      [BIC.OST_Conduit, BIC.OST_ConduitFitting]),
 ]
 
@@ -532,7 +532,7 @@ class AutoShaftOkno(forms.WPFWindow):
             for li in deti:
                 lname = nazov_linku(li)
                 cb = CheckBox()
-                cb.Content = u"{}   ({} ks)".format(lname, pocty[(gkey, li.Id.Value)])
+                cb.Content = lname
                 cb.IsChecked = bool(rodic.IsChecked) and \
                     (gkey + u"|" + lname) not in vypnute
                 polozka = TreeViewItem()
