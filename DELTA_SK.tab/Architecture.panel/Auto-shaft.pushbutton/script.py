@@ -37,7 +37,7 @@ PARAM_VYSKA = u"Vyska_otvoru"   # inštančný parameter (dĺžka)
 PARAM_LINKID = u"ID_otvor"      # inštančný parameter (text)
 
 ZAOKRUHLENIE_MM = 10.0          # rozmer otvoru sa zaokrúhli nahor
-MIN_DN_MM = 20.0                # potrubia/chráničky pod DN20 sa ignorujú
+MIN_DN_MM = 20.0                # prepíše sa hodnotou z okna (pod DN sa ignorujú)
 TOLERANCIA_UHLA_DEG = 5.0       # väčší odklon od kolmice = šikmý prechod (osadí sa, vypíše sa)
 MAX_UHOL_DEG = 75.0             # väčší odklon = prvok vedený v stene (neosadí sa)
 TOLERANCIA_KONTROLY_MM = 5.0    # menší rozdiel polohy/rozmeru = otvor sedí
@@ -45,6 +45,7 @@ TOLERANCIA_KONTROLY_MM = 5.0    # menší rozdiel polohy/rozmeru = otvor sedí
 PREDVOLENY_FILTER = u"RCO"      # typy stien označené pri prvom spustení
 PREDVOLENA_RODINA = u"DGSK_otvor_stena"
 PREDVOLENY_ODSTUP = u"50"
+PREDVOLENE_MIN_DN = u"20"
 
 # kľúč (= názov ovládacích prvkov v ui.xaml), popis, kategórie
 PROFESIE = [
@@ -476,6 +477,7 @@ class AutoShaftOkno(forms.WPFWindow):
                 cfg_get("prof_" + key, u"1") == u"1"
             getattr(self, key + "_tb").Text = \
                 cfg_get("odstup_" + key, PREDVOLENY_ODSTUP)
+        self.mindn_tb.Text = cfg_get("min_dn", PREDVOLENE_MIN_DN)
         if cfg_get("rezim", u"jednotny") == u"jednotny":
             self.uniform_rb.IsChecked = True
         else:
@@ -567,12 +569,18 @@ class AutoShaftOkno(forms.WPFWindow):
                     v = float(PREDVOLENY_ODSTUP)
                 odstupy[key] = v
 
+        min_dn = parse_mm(self.mindn_tb.Text)
+        if min_dn is None:
+            forms.alert(u"Minimálne DN musí byť kladné číslo (0 = bez obmedzenia).")
+            return
+
         # uloženie nastavení na ďalšie spustenie
         try:
             cfg.set_option("rodina", self.family_cb.SelectedItem)
             cfg.set_option("filter", self.filter_tb.Text or u"")
             cfg.set_option("rezim", u"jednotny" if jednotny else u"profesie")
             cfg.set_option("odstup", self.uniform_tb.Text or u"")
+            cfg.set_option("min_dn", self.mindn_tb.Text or u"")
             for key, _, _ in PROFESIE:
                 cfg.set_option("prof_" + key,
                                u"1" if getattr(self, key + "_cb").IsChecked else u"0")
@@ -593,6 +601,7 @@ class AutoShaftOkno(forms.WPFWindow):
             "linky": link_ids,
             "profesie": profesie,
             "odstupy": odstupy,
+            "min_dn": min_dn,
             "nove": nove,
             "kontrola": kontrola,
             "upravit": kontrola and bool(self.update_cb.IsChecked),
@@ -610,6 +619,7 @@ if not vysledok:
 volba = vysledok["rodina"]
 symbol = symboly[volba]
 rob_nove = vysledok["nove"]
+MIN_DN_MM = vysledok["min_dn"]
 rob_kontrolu = vysledok["kontrola"]
 
 # odstup podľa kategórie – pre všetky profesie
@@ -965,8 +975,9 @@ if rob_nove:
         len([1 for _, r in nove_otvory if r[5] > TOLERANCIA_UHLA_DEG])))
     output.print_md(u"- Preskočené – prvok už má otvor: **{}**".format(
         pocet_uz_ma_otvor))
-    output.print_md(u"- Preskočené – menšie ako DN{}: **{}**".format(
-        int(MIN_DN_MM), pocet_malych))
+    if MIN_DN_MM > 0:
+        output.print_md(u"- Preskočené – menšie ako DN{:g}: **{}**".format(
+            MIN_DN_MM, pocet_malych))
     output.print_md(u"- Preskočené – prvky vedené v stene: **{}**".format(
         len(v_stene)))
     output.print_md(u"- Zlyhaný výpočet geometrie: **{}**".format(
